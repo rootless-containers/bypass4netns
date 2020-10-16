@@ -153,7 +153,7 @@ static void handle_sys_connect(struct ctx *ctx) {
     goto ret;
     break;
   case 172:
-    printf("skipping (possibly) `podman network create` network ip=0x%08x\n",
+    printf("skipping (possibly) `docker network create` network ip=0x%08x\n",
            ip);
     ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
