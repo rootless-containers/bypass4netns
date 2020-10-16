@@ -1,0 +1,7 @@
+#!/bin/sh
+# NOTE: requires --security-opt seccomp=seccomp.json
+set -eu
+CRUN=crun
+RUN_OCI_SECCOMP_RECEIVER="${XDG_RUNTIME_DIR}/bypass4netns.sock"
+export RUN_OCI_SECCOMP_RECEIVER
+exec "$CRUN" "$@"
