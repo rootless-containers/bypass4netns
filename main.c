@@ -116,13 +116,12 @@ struct ctx {
 };
 
 static void handle_sys_connect(struct ctx *ctx) {
-  int pidfd = -1, sockfd = -1;
+  int pidfd = -1, sockfd = -1, sockfd2 = -1;
   int sockfd_num = ctx->req->data.args[0];
   struct sockaddr *addr = NULL;
   size_t addrlen = ctx->req->data.args[2];
   read_proc_mem((void **)&addr, ctx->req->pid, ctx->req->data.args[1], addrlen);
   if (addr->sa_family != AF_INET) {
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   struct sockaddr_in *sin = (struct sockaddr_in *)(addr);
@@ -143,19 +142,16 @@ static void handle_sys_connect(struct ctx *ctx) {
      *
      */
     printf("skipping local ip=0x%08x\n", ip);
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
     break;
   case 10:
     printf("skipping (possibly) `podman network create` network ip=0x%08x\n",
            ip);
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
     break;
   case 172:
     printf("skipping (possibly) `docker network create` network ip=0x%08x\n",
            ip);
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
     break;
   default:
@@ -165,14 +161,12 @@ static void handle_sys_connect(struct ctx *ctx) {
   pidfd = _mydef_pidfd_open(ctx->req->pid, 0);
   if (pidfd < 0) {
     perror("pidfd_open");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   /* pidfd_getfd requires kernel >= 5.6 */
   sockfd = _mydef_pidfd_getfd(pidfd, sockfd_num, 0);
   if (sockfd < 0) {
     perror("pidfd_getfd");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   printf("got sockfd=%d\n", sockfd);
@@ -181,24 +175,20 @@ static void handle_sys_connect(struct ctx *ctx) {
   if (getsockopt(sockfd, SOL_SOCKET, SO_DOMAIN, &sock_domain,
                  &sock_domain_len) < 0) {
     perror("getsockopt(SO_DOMAIN)");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   if (sock_domain != AF_INET) {
     fprintf(stderr, "expected AF_INET, got %d\n", sock_domain);
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   int sock_type;
   socklen_t sock_type_len = sizeof(sock_type);
   if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &sock_type, &sock_type_len) < 0) {
     perror("getsockopt(SO_TYPE)");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
   if (sock_type != SOCK_STREAM) {
     fprintf(stderr, "expected SOCK_STREAM, got %d\n", sock_type);
-    ctx->resp->error = -ENOTSUP;
     goto ret;
   }
   int sock_protocol;
@@ -206,14 +196,12 @@ static void handle_sys_connect(struct ctx *ctx) {
   if (getsockopt(sockfd, SOL_SOCKET, SO_PROTOCOL, &sock_protocol,
                  &sock_protocol_len) < 0) {
     perror("getsockopt(SO_PROTOCOL)");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
 
-  int sockfd2 = socket(sock_domain, sock_type, sock_protocol);
+  sockfd2 = socket(sock_domain, sock_type, sock_protocol);
   if (sockfd2 < 0) {
     perror("socket");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
 
@@ -226,28 +214,18 @@ static void handle_sys_connect(struct ctx *ctx) {
   };
   if (ioctl(ctx->notify_fd, SECCOMP_IOCTL_NOTIF_ADDFD, &addfd) < 0) {
     perror("ioctl(SECCOMP_IOCTL_NOTIF_ADDFD)");
-    ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
     goto ret;
   }
-  printf("ioctl successful\n");
-
-  int rc = connect(sockfd2, addr, addrlen);
-  if (rc == 0) {
-    printf("connect(pid=%d): called connect() with sockfd=%d, rc=%d\n",
-           ctx->req->pid, sockfd, rc);
-  } else {
-    printf(
-        "connect(pid=%d): called connect() with sockfd=%d, rc=%d, errno=%s\n",
-        ctx->req->pid, sockfd, rc, strerror(errno));
-  }
-  ctx->resp->val = rc;
-  ctx->resp->error = rc == 0 ? 0 : -errno;
 ret:
+  ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
   if (pidfd >= 0) {
     close(pidfd);
   }
   if (sockfd >= 0) {
     close(sockfd);
+  }
+  if (sockfd2 >= 0) {
+    close(sockfd2);
   }
   if (addr != NULL) {
     free(addr);
