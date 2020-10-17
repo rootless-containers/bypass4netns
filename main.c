@@ -187,10 +187,6 @@ static void handle_sys_connect(struct ctx *ctx) {
     perror("getsockopt(SO_TYPE)");
     goto ret;
   }
-  if (sock_type != SOCK_STREAM) {
-    fprintf(stderr, "expected SOCK_STREAM, got %d\n", sock_type);
-    goto ret;
-  }
   int sock_protocol;
   socklen_t sock_protocol_len = sizeof(sock_protocol);
   if (getsockopt(sockfd, SOL_SOCKET, SO_PROTOCOL, &sock_protocol,
