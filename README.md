@@ -9,6 +9,8 @@ The project name is still subject to change.
 
 ## Benchmark
 
+([Oct 16, 2020](https://github.com/rootless-containers/bypass4netns/tree/0f2633f8c8022d39caacd94372855df401411ae2))
+
 Workload: `iperf3 -c HOST_IP` from `podman run`
 
 - `--net=host` (insecure): 57.9 Gbps
@@ -21,7 +23,7 @@ To be documented. See the code :)
 
 ## Requirements
 - kernel >= 5.9
-- crun >= 0.15
+- runc >= 1.1
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
 
@@ -41,7 +43,8 @@ $ bypass4netns
 ```
 
 ```console
-$ $DOCKER run -it --rm --runtime $(pwd)/test/crun-bypass4netns --security-opt seccomp=$(pwd)/test/seccomp.json alpine
+$ ./test/seccomp.json.sh >$HOME/seccomp.json
+$ $DOCKER run -it --rm --runtime --security-opt seccomp=$HOME/seccomp.json alpine
 ```
 
 `$DOCKER` is either `docker`, `podman`, or `nerdctl`.
