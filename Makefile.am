@@ -1,0 +1,4 @@
+AM_CFLAGS = @GLIB_CFLAGS@ @LIBSECCOMP_CFLAGS@
+bin_PROGRAMS = bypass4netns
+bypass4netns_SOURCES = main.c
+bypass4netns_LDADD =  @GLIB_LIBS@ @LIBSECCOMP_LIBS@

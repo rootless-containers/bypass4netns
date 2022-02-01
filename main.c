@@ -145,7 +145,8 @@ static void handle_sys_connect(struct ctx *ctx) {
     goto ret;
     break;
   case 10:
-    printf("skipping (possibly) `podman network create` network ip=0x%08x\n",
+    printf("skipping (possibly) `(podman|nerdctl) network create` network "
+           "ip=0x%08x\n",
            ip);
     goto ret;
     break;
