@@ -1,0 +1,20 @@
+name: Test
+on:
+  push:
+    branches:
+      - master
+      - 'release/**'
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - run: |
+      sudo apt-get update
+      sudo apt-get install -y libglib2.0-dev libseccomp-dev
+    - run: |
+      autoreconf -fis
+      ./configure
+      make
+# TODO: more tests
