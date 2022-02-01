@@ -28,13 +28,16 @@ To be documented. See the code :)
 ## Compile
 
 ```console
-$ LIBSECCOMP_PREFIX=/opt/libseccomp ./make.sh
+autoreconf -fis
+./configure
+make
+sudo make install
 ```
 
 ## Usage
 
 ```console
-$ ./bin/bypass4netns
+$ bypass4netns
 ```
 
 ```console
