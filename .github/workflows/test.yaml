@@ -9,6 +9,8 @@ jobs:
   test:
     runs-on: ubuntu-20.04
     timeout-minutes: 20
+    env:
+      XDG_RUNTIME_DIR: /tmp/dummy_xdg_runtime_dir
     steps:
     - uses: actions/checkout@v2
     - name: "Install build dependencies"
@@ -20,4 +22,33 @@ jobs:
         autoreconf -fis
         ./configure
         make
-# TODO: more tests
+        sudo make install
+    - name: "Install benchmark dependencies"
+      env:
+        NERDCTL_VERSION: 0.16.1
+      run: |
+        sudo apt-get install -y iperf3
+        curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
+        mkdir -m 700 -p "${XDG_RUNTIME_DIR}"
+        containerd-rootless.sh >/tmp/containerd.log 2>&1 &
+        sleep 3
+        nerdctl info || ( cat /tmp/containerd.log; exit 1 )
+        nerdctl version
+    - name: "Prepare benchmarking"
+      run: |
+        hostname -I | awk '{print $1}' | tee /tmp/host_ip
+        iperf3 -s >/tmp/iperf3.log 2>&1 &
+        bypass4netns >/tmp/bypass4netns.log 2>&1 &
+        test/seccomp.json.sh | tee /tmp/seccomp.json
+    - name: "Benchmark: with bypass4netns"
+      run: |
+        nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test alpine sleep infinity
+        nerdctl exec test apk add --no-cache iperf3
+        nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
+        nerdctl rm -f test
+    - name: "Benchmark: without bypass4netns (For comparison)"
+      run: |
+        nerdctl run -d --name test alpine sleep infinity
+        nerdctl exec test apk add --no-cache iperf3
+        nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
+        nerdctl rm -f test
