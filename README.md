@@ -23,7 +23,7 @@ To be documented. See the code :)
 - kernel >= 5.9
 - crun >= 0.15
 - libseccomp >= 2.5
-- Rootless Docker or Rootless Podman
+- Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
 
 ## Compile
 
@@ -41,8 +41,10 @@ $ bypass4netns
 ```
 
 ```console
-$ podman run -it --rm --runtime $(pwd)/test/crun-bypass4netns --security-opt seccomp=$(pwd)/test/seccomp.json alpine
+$ $DOCKER run -it --rm --runtime $(pwd)/test/crun-bypass4netns --security-opt seccomp=$(pwd)/test/seccomp.json alpine
 ```
+
+`$DOCKER` is either `docker`, `podman`, or `nerdctl`.
 
 ## :warning: Caveats :warning:
 Accesses to host abstract sockets and host loopback IPs (127.0.0.0/8) from containers are designed to be rejected.
@@ -51,6 +53,6 @@ However, it is probably possible to connect to host loopback IPs by exploiting [
 of `struct sockaddr *` pointers.
 
 ## TODOs
-- Stop hard-coding `docker network create` CIDR (172.0.0.0/8) and `podman network create` CIDR (10.0.0.0/8)
-- Accelerate port forwarding (`docker run -p` and `podman run -p`) as well
+- Stop hard-coding `docker network create` CIDR (172.0.0.0/8) and `(podman|nerdctl) network create` CIDR (10.0.0.0/8)
+- Accelerate port forwarding (`(docker|podman|nerdctl) run -p`) as well
 - Rewrite in Go, perhaps
