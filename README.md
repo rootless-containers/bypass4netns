@@ -44,7 +44,7 @@ $ bypass4netns
 
 ```console
 $ ./test/seccomp.json.sh >$HOME/seccomp.json
-$ $DOCKER run -it --rm --runtime --security-opt seccomp=$HOME/seccomp.json alpine
+$ $DOCKER run -it --rm --security-opt seccomp=$HOME/seccomp.json alpine
 ```
 
 `$DOCKER` is either `docker`, `podman`, or `nerdctl`.
