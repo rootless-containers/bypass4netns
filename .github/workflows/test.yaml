@@ -8,13 +8,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-20.04
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v2
-    - run: |
-      sudo apt-get update
-      sudo apt-get install -y libglib2.0-dev libseccomp-dev
-    - run: |
-      autoreconf -fis
-      ./configure
-      make
+    - name: "Install build dependencies"
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libglib2.0-dev libseccomp-dev
+    - name: "Build"
+      run: |
+        autoreconf -fis
+        ./configure
+        make
 # TODO: more tests
