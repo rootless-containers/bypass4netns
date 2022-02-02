@@ -230,12 +230,240 @@ ret:
   return;
 }
 
+static void handle_sys_accept(struct ctx *ctx) {
+  int pidfd = -1, sockfd = -1, sockfd2 = -1;
+  int sockfd_num = ctx->req->data.args[0];
+  struct sockaddr *addr = NULL;
+  socklen_t *addrlen = NULL;
+  read_proc_mem((void **)&addrlen, ctx->req->pid, ctx->req->data.args[2], sizeof(*addrlen));
+  read_proc_mem((void **)&addr, ctx->req->pid, ctx->req->data.args[1], *addrlen);
+  printf("[DEBUG accept] pid=%d addrlen=%d sa_family=%d\n", ctx->req->pid, *addrlen, addr->sa_family);
+  if (addr->sa_family != AF_INET) {
+    goto ret;
+  }
+  struct sockaddr_in *sin = (struct sockaddr_in *)(addr);
+  uint16_t port = ntohs(sin->sin_port);
+  uint32_t ip = ntohl(sin->sin_addr.s_addr);
+  printf("accept(pid=%d): sockfd_num=%d, port=%d, ip=0x%08x\n", ctx->req->pid,
+         sockfd_num, port, ip);
+
+ret:
+  ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+  if (pidfd >= 0) {
+    close(pidfd);
+  }
+  if (sockfd >= 0) {
+    close(sockfd);
+  }
+  if (sockfd2 >= 0) {
+    close(sockfd2);
+  }
+  if (addrlen != NULL) {
+    free(addrlen);
+  }
+  if (addr != NULL) {
+    free(addr);
+  }
+  return;
+}
+
+static void handle_sys_bind(struct ctx *ctx) {
+  int pidfd = -1, sockfd = -1, sockfd2 = -1;
+  int sockfd_num = ctx->req->data.args[0];
+  struct sockaddr *addr = NULL;
+  socklen_t addrlen = ctx->req->data.args[2];
+  read_proc_mem((void **)&addr, ctx->req->pid, ctx->req->data.args[1], addrlen);
+  printf("[DEBUG bind] pid=%d addrlen=%d sa_family=%d\n", ctx->req->pid, addrlen, addr->sa_family);
+  if (addr->sa_family == AF_INET6) {
+    struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *)addr;
+    printf("port=%d\n", addr_in6->sin6_port);
+    for (int i = 0; i < 16; i++)
+    {
+      printf("%d.", addr_in6->sin6_addr.s6_addr[i]);
+    }
+    printf("\n");
+  }
+  ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+  if (addr->sa_family != AF_INET) {
+    goto ret;
+  }
+  struct sockaddr_in *sin = (struct sockaddr_in *)(addr);
+  uint16_t port = ntohs(sin->sin_port);
+  uint32_t ip = ntohl(sin->sin_addr.s_addr);
+  printf("bind(pid=%d): sockfd_num=%d, port=%d, ip=0x%08x\n", ctx->req->pid,
+         sockfd_num, port, ip);
+  // TODO: check the bindind address is INADDR_ANY or the address assigned for container itself.
+  switch (ip >> 24) {
+  case 127:
+    /*
+     * Best-effort to block connecting to 127.0.0.0/8 on the host network
+     * namespace.
+     *
+     * CAUTION: the tracee process might be able to connect to 127.0.0.0/8 on
+     * the host by exploiting TOCTOU of `struct sockaddr *` pointer.
+     *
+     * https://elixir.bootlin.com/linux/v5.9/source/include/uapi/linux/seccomp.h#L81
+     *
+     */
+    printf("skipping local ip=0x%08x\n", ip);
+    goto ret;
+    break;
+  case 10:
+    printf("skipping (possibly) `(podman|nerdctl) network create` network "
+           "ip=0x%08x\n",
+           ip);
+    goto ret;
+    break;
+  case 172:
+    printf("skipping (possibly) `docker network create` network ip=0x%08x\n",
+           ip);
+    goto ret;
+    break;
+  default:
+    break;
+  }
+
+  // Only iperf3 port is mapped.
+  if (port != 5201) {
+    printf("not mapped port:%d\n", port);
+    goto ret;
+  }
+
+  /* pidfd_open requires kernel >= 5.3 */
+  pidfd = _mydef_pidfd_open(ctx->req->pid, 0);
+  if (pidfd < 0) {
+    perror("pidfd_open");
+    goto ret;
+  }
+  /* pidfd_getfd requires kernel >= 5.6 */
+  sockfd = _mydef_pidfd_getfd(pidfd, sockfd_num, 0);
+  if (sockfd < 0) {
+    perror("pidfd_getfd");
+    goto ret;
+  }
+  printf("got sockfd=%d\n", sockfd);
+
+  int sock_domain;
+  socklen_t sock_domain_len = sizeof(sock_domain);
+  if (getsockopt(sockfd, SOL_SOCKET, SO_DOMAIN, &sock_domain,
+                 &sock_domain_len) < 0) {
+    perror("getsockopt(SO_DOMAIN)");
+    goto ret;
+  }
+  if (sock_domain != AF_INET) {
+    fprintf(stderr, "expected AF_INET, got %d\n", sock_domain);
+    goto ret;
+  }
+  int sock_type;
+  socklen_t sock_type_len = sizeof(sock_type);
+  if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &sock_type, &sock_type_len) < 0) {
+    perror("getsockopt(SO_TYPE)");
+    goto ret;
+  }
+  int sock_protocol;
+  socklen_t sock_protocol_len = sizeof(sock_protocol);
+  if (getsockopt(sockfd, SOL_SOCKET, SO_PROTOCOL, &sock_protocol,
+                 &sock_protocol_len) < 0) {
+    perror("getsockopt(SO_PROTOCOL)");
+    goto ret;
+  }
+
+  int sock_reuse_addr;
+  socklen_t sock_reuse_addr_len = sizeof(sock_reuse_addr);
+  if (getsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &sock_reuse_addr, &sock_reuse_addr_len) < 0)  {
+    perror("getsockopt(SO_REUSEADDR)");
+    goto ret;
+  }
+
+  sockfd2 = socket(sock_domain, sock_type, sock_protocol);
+  if (sockfd2 < 0) {
+    perror("socket");
+    goto ret;
+  }
+
+  printf("[DEBUG] SO_REUSEADDR:%d\n", sock_reuse_addr);
+  if (setsockopt(sockfd2, SOL_SOCKET, SO_REUSEADDR, &sock_reuse_addr, sock_reuse_addr_len) < 0)  {
+    perror("setsockopt(SO_REUSEADDR)");
+    goto ret;
+  }
+
+  struct sockaddr_in bind_addr = {
+    .sin_family = AF_INET,
+    .sin_addr = htonl(INADDR_ANY),
+    .sin_port = htons(8080),
+  };
+
+  int ret = bind(sockfd2, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
+  if (ret < 0) {
+    perror("bind");
+    goto ret;
+  }
+
+  struct _mydef_seccomp_notif_addfd addfd = {
+      .id = ctx->req->id,
+      .flags = SECCOMP_ADDFD_FLAG_SETFD,
+      .srcfd = sockfd2,
+      .newfd = sockfd_num,
+      .newfd_flags = 0,
+  };
+
+  if (ioctl(ctx->notify_fd, SECCOMP_IOCTL_NOTIF_ADDFD, &addfd) < 0) {
+    perror("ioctl(SECCOMP_IOCTL_NOTIF_ADDFD)");
+    goto ret;
+  }
+  // bind(2) is already executed
+  ctx->resp->flags &= (~SECCOMP_USER_NOTIF_FLAG_CONTINUE);
+ret:
+  if (pidfd >= 0) {
+    close(pidfd);
+  }
+  if (sockfd >= 0) {
+    close(sockfd);
+  }
+  if (sockfd2 >= 0) {
+    close(sockfd2);
+  }
+  if (addr != NULL) {
+    free(addr);
+  }
+  return;
+}
+
+static void handle_sys_listen(struct ctx *ctx) {
+  int pidfd = -1, sockfd = -1, sockfd2 = -1;
+  int sockfd_num = ctx->req->data.args[0];
+  int backlog = ctx->req->data.args[1];
+  printf("listen(pid=%d): sockfd_num=%d, backlog=%d\n", ctx->req->pid,
+         sockfd_num, backlog);
+ret:
+  ctx->resp->flags |= SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+  if (pidfd >= 0) {
+    close(pidfd);
+  }
+  if (sockfd >= 0) {
+    close(sockfd);
+  }
+  if (sockfd2 >= 0) {
+    close(sockfd2);
+  }
+  return;
+}
+
 static void handle_req(struct ctx *ctx) {
   ctx->resp->id = ctx->req->id;
   switch (ctx->req->data.nr) {
   /* FIXME: use SCMP_SYS macro */
   case __NR_connect:
     handle_sys_connect(ctx);
+    break;
+  case __NR_bind:
+    handle_sys_bind(ctx);
+    break;
+  case __NR_listen:
+    handle_sys_listen(ctx);
+    break;
+  case __NR_accept:
+    handle_sys_accept(ctx);
     break;
   default:
     fprintf(stderr, "Unexpected syscall %d, returning -ENOTSUP\n",
