@@ -179,9 +179,16 @@ type SeccompNotifAddFd struct {
 	newfdFlags uint32
 }
 
-func handleSysConnect(ctx *Context) {
-	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
+type SocketSetsockopt struct {
+	level   uint64
+	optname uint64
+	optval  []byte
+	optlen  uint64
+}
 
+type SocketOptionsMap = map[string][]SocketSetsockopt
+
+func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -268,6 +275,12 @@ func handleSysConnect(ctx *Context) {
 	}
 	defer syscall.Close(sockfd2)
 
+	err = setSocketoptions(ctx, sockfd2, optmap)
+	if err != nil {
+		logrus.Errorf("setsocketoptions failed: %s", err)
+		return
+	}
+
 	addfd := SeccompNotifAddFd{
 		id:         ctx.req.ID,
 		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
@@ -285,9 +298,7 @@ func handleSysConnect(ctx *Context) {
 	}
 }
 
-func handleSysBind(ctx *Context) {
-	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
-
+func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -380,9 +391,9 @@ func handleSysBind(ctx *Context) {
 	}
 	defer syscall.Close(sockfd2)
 
-	err = syscall.SetsockoptInt(sockfd2, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	err = setSocketoptions(ctx, sockfd2, optmap)
 	if err != nil {
-		logrus.Errorf("setsockopt(SO_REUSEADDR) failed: %s", err)
+		logrus.Errorf("setsocketoptions failed: %s", err)
 		return
 	}
 
@@ -415,7 +426,62 @@ func handleSysBind(ctx *Context) {
 	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
 }
 
-func handleReq(ctx *Context) {
+func setSocketoptions(ctx *Context, sockfd int, optmap SocketOptionsMap) error {
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
+	optValues, ok := optmap[key]
+	if !ok {
+		return nil
+	}
+	for _, optVal := range optValues {
+		_, _, errno := syscall.Syscall6(syscall.SYS_SETSOCKOPT, uintptr(sockfd), uintptr(optVal.level), uintptr(optVal.optname), uintptr(unsafe.Pointer(&optVal.optval[0])), uintptr(optVal.optlen), 0)
+		if errno != 0 {
+			return fmt.Errorf("setsockopt failed(%v): %s", optVal, errno)
+		}
+		logrus.Debugf("configured socket option pid=%d sockfd=%d (%v)", ctx.req.Pid, sockfd, optVal)
+	}
+
+	return nil
+}
+
+func handleSysSetsockopt(ctx *Context, optmap SocketOptionsMap) {
+	sockfd := ctx.req.Data.Args[0]
+	level := ctx.req.Data.Args[1]
+	optname := ctx.req.Data.Args[2]
+	optlen := ctx.req.Data.Args[4]
+	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
+	if err != nil {
+		logrus.Errorf("Error readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+		return
+	}
+
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
+	_, ok := optmap[key]
+	if !ok {
+		optmap[key] = make([]SocketSetsockopt, 0)
+	}
+
+	value := SocketSetsockopt{
+		level:   level,
+		optname: optname,
+		optval:  optval,
+		optlen:  optlen,
+	}
+	optmap[key] = append(optmap[key], value)
+	logrus.Infof("setsockopt(pid=%d): sockfd=%d, level=%d, optname=%d optval=%v", ctx.req.Pid, ctx.req.Data.Args[0], level, optname, optval)
+}
+
+func handleSysClose(ctx *Context, optmap SocketOptionsMap) {
+	sockfd := ctx.req.Data.Args[0]
+	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
+	_, ok := optmap[key]
+	if ok {
+		delete(optmap, key)
+		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
+	}
+}
+
+func handleReq(ctx *Context, optmap SocketOptionsMap) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
 	if err != nil {
 		logrus.Errorf("Error decoding syscall %v(): %s", ctx.req.Data.Syscall, err)
@@ -424,11 +490,18 @@ func handleReq(ctx *Context) {
 	}
 	logrus.Debugf("Received syscall %q, pid %v, arch %q, args %+v", syscallName, ctx.req.Pid, ctx.req.Data.Arch, ctx.req.Data.Args)
 
+	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
+
 	switch syscallName {
 	case "connect":
-		handleSysConnect(ctx)
+		handleSysConnect(ctx, optmap)
 	case "bind":
-		handleSysBind(ctx)
+		handleSysBind(ctx, optmap)
+	case "setsockopt":
+		handleSysSetsockopt(ctx, optmap)
+	case "close":
+		// handling close(2) may cause performance degradation
+		handleSysClose(ctx, optmap)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
@@ -440,6 +513,7 @@ func handleReq(ctx *Context) {
 // notifHandler handles seccomp notifications and responses
 func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 	defer unix.Close(int(fd))
+	optmap := SocketOptionsMap{}
 	for {
 		req, err := libseccomp.NotifReceive(fd)
 		if err != nil {
@@ -464,7 +538,7 @@ func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 			continue
 		}
 
-		handleReq(&ctx)
+		handleReq(&ctx, optmap)
 
 		if err = libseccomp.NotifRespond(fd, ctx.resp); err != nil {
 			logrus.Errorf("Error in notification response: %s", err)
