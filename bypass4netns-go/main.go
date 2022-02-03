@@ -52,7 +52,7 @@ func seccomp_iow(nr, typ uintptr) uintptr {
 
 // C.SECCOMP_IOCTL_NOTIF_ADDFD become error
 // Error Message: could not determine kind of name for C.SECCOMP_IOCTL_NOTIF_ADDFD
-// TODO: use C.SECCOMP_IOCTL_NOTIF_ADDFD
+// TODO: use C.SECCOMP_IOCTL_NOTIF_ADDFD or add equivalent variable to libseccomp-go
 func seccomp_ioctl_notif_addfd() uintptr {
 	return seccomp_iow(3, uintptr(C.get_size_of_seccomp_notif_addfd()))
 }
@@ -285,6 +285,136 @@ func handleSysConnect(ctx *Context) {
 	}
 }
 
+func handleSysBind(ctx *Context) {
+	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
+
+	addrlen := ctx.req.Data.Args[2]
+	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
+	if err != nil {
+		logrus.Errorf("Error readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+		return
+	}
+
+	addr := syscall.RawSockaddr{}
+	reader := bytes.NewReader(buf)
+	err = binary.Read(reader, binary.LittleEndian, &addr)
+	if err != nil {
+		logrus.Errorf("Error casting byte array to RawSocksddr: %s", err)
+		return
+	}
+
+	if addr.Family != syscall.AF_INET {
+		logrus.Debugf("Not AF_INET addr: %d", addr.Family)
+		return
+	}
+	addrInet := syscall.RawSockaddrInet4{}
+	reader.Seek(0, 0)
+	err = binary.Read(reader, binary.LittleEndian, &addrInet)
+	if err != nil {
+		logrus.Errorf("Error casting byte array to RawSockaddrInet4: %s", err)
+	}
+
+	logrus.Debugf("%v", addrInet)
+	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
+	logrus.Infof("bind(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+
+	if port != 5201 {
+		logrus.Infof("not mapped port=%d", port)
+		return
+	}
+
+	switch addrInet.Addr[0] {
+	case 127:
+		logrus.Infof("skipping local ip=%v", addrInet.Addr)
+		return
+	case 10:
+		logrus.Infof("skipping (possibly) (`podmain|nerdctl) network create` network ip=%v", addrInet.Addr)
+		return
+	case 172:
+		logrus.Infof("skipping (possibly) (`docker network create` network ip=%v", addrInet.Addr)
+		return
+	}
+
+	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
+	if err != nil {
+		logrus.Errorf("Pidfd Open failed: %s", err)
+		return
+	}
+	defer syscall.Close(int(targetPidfd))
+
+	sockfd, err := targetPidfd.GetFd(int(ctx.req.Data.Args[0]), 0)
+	if err != nil {
+		logrus.Errorf("Pidfd GetFd failed: %s", err)
+		return
+	}
+	defer syscall.Close(sockfd)
+
+	logrus.Debugf("got sockfd=%v", sockfd)
+	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
+	if err != nil {
+		logrus.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
+		return
+	}
+
+	if sock_domain != syscall.AF_INET {
+		logrus.Errorf("expected AF_INET, got %d", sock_domain)
+		return
+	}
+
+	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+	if err != nil {
+		logrus.Errorf("getsockopt(SO_TYPE) failed: %s", err)
+		return
+	}
+
+	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
+	if err != nil {
+		logrus.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
+		return
+	}
+
+	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
+	if err != nil {
+		logrus.Errorf("socket failed: %s", err)
+		return
+	}
+	defer syscall.Close(sockfd2)
+
+	err = syscall.SetsockoptInt(sockfd2, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	if err != nil {
+		logrus.Errorf("setsockopt(SO_REUSEADDR) failed: %s", err)
+		return
+	}
+
+	bind_addr := syscall.SockaddrInet4{
+		Port: int(8080),
+		Addr: addrInet.Addr,
+	}
+
+	err = syscall.Bind(sockfd2, &bind_addr)
+	if err != nil {
+		logrus.Errorf("bind failed: %s", err)
+		return
+	}
+
+	addfd := SeccompNotifAddFd{
+		id:         ctx.req.ID,
+		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		srcfd:      uint32(sockfd2),
+		newfd:      uint32(ctx.req.Data.Args[0]),
+		newfdFlags: 0,
+	}
+
+	ioctl_op := seccomp_ioctl_notif_addfd()
+	logrus.Debugf("ioctl_op:%v", ioctl_op)
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(ctx.notifFd), ioctl_op, uintptr(unsafe.Pointer(&addfd)))
+	if errno != 0 {
+		logrus.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", err)
+		return
+	}
+	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
+}
+
 func handleReq(ctx *Context) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
 	if err != nil {
@@ -297,6 +427,8 @@ func handleReq(ctx *Context) {
 	switch syscallName {
 	case "connect":
 		handleSysConnect(ctx)
+	case "bind":
+		handleSysBind(ctx)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
