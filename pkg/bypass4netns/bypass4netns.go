@@ -1,5 +1,8 @@
 package bypass4netns
 
+// This code is copied from 'runc(https://github.com/opencontainers/runc/blob/v1.1.0/contrib/cmd/seccompagent/seccompagent.go)'
+// The code is licensed under Apache-2.0 License
+
 import (
 	"bytes"
 	"encoding/binary"

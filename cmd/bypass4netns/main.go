@@ -1,8 +1,5 @@
 package main
 
-// This code is copied from 'runc(https://github.com/opencontainers/runc/blob/v1.1.0/contrib/cmd/seccompagent/seccompagent.go)'
-// The code is licensed under Apach-2.0 License
-
 import (
 	"errors"
 	"flag"
