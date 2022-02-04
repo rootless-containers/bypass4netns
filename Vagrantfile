@@ -25,14 +25,13 @@ Vagrant.configure("2") do |config|
     (
      set -x
      sudo apt-get update
-     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y autoconf automake build-essential curl dbus-user-session iperf3 libglib2.0-dev libseccomp-dev uidmap
+     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap golang
      systemctl --user start dbus
 
      cd /vagrant
-     autoreconf -fis
-     ./configure -q
      make
      sudo make install
+     systemd-run --user --unit run-bypass4netns bypass4netns
 
      curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
      containerd-rootless-setuptool.sh install
@@ -42,20 +41,19 @@ Vagrant.configure("2") do |config|
      hostname -I | awk '{print $1}' | tee /tmp/host_ip
      /vagrant/test/seccomp.json.sh | tee /tmp/seccomp.json
 
-     systemd-run --user --unit run-iperf3 iperf3 -s
-     systemd-run --user --unit run-bypass4netns bypass4netns
     )
 
-    echo "===== Benchmark: With bypass4netns ====="
+    echo "===== Benchmark: netns -> host With bypass4netns ====="
     (
      set -x
+     systemd-run --user --unit run-iperf3 iperf3 -s
      nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test "${ALPINE_IMAGE}" sleep infinity
      nerdctl exec test apk add --no-cache iperf3
      nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
      nerdctl rm -f test
     )
 
-    echo "===== Benchmark: Without bypass4netns (for comparison) ====="
+    echo "===== Benchmark: netns -> host Without bypass4netns (for comparison) ====="
     (
      set -x
      nerdctl run -d --name test "${ALPINE_IMAGE}" sleep infinity
@@ -63,5 +61,28 @@ Vagrant.configure("2") do |config|
      nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
      nerdctl rm -f test
     )
+
+    echo "===== Benchmark: host -> netns With bypass4netns ====="
+    (
+     set -x
+     nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test "${ALPINE_IMAGE}" sleep infinity
+     nerdctl exec test apk add --no-cache iperf3
+     systemd-run --user --unit run-iperf3-netns nerdctl exec test iperf3 -s -4
+     sleep 1 # waiting `iperf3 -s -4` becomes ready
+     iperf3 -c "$(cat /tmp/host_ip)" -p 8080
+     nerdctl rm -f test
+    )
+
+    echo "===== Benchmark: host -> netns Without bypass4netns (for comparison) ====="
+    (
+     set -x
+     nerdctl run -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
+     nerdctl exec test apk add --no-cache iperf3
+     systemd-run --user --unit run-iperf3-netns2 nerdctl exec test iperf3 -s -4
+     sleep 1
+     iperf3 -c "$(cat /tmp/host_ip)" -p 8080
+     nerdctl rm -f test
+    )
+
   SHELL
 end

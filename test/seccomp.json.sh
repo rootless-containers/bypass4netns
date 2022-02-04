@@ -19,7 +19,10 @@ cat <<EOF
   "syscalls": [
     {
       "names": [
-        "connect"
+        "bind",
+        "close",
+        "connect",
+        "setsockopt"
       ],
       "action": "SCMP_ACT_NOTIFY"
     }

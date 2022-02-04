@@ -26,12 +26,12 @@ To be documented. See the code :)
 - runc >= 1.1
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
+Build-time requirement:
+- golang >= 1.17
 
 ## Compile
 
 ```console
-autoreconf -fis
-./configure
 make
 sudo make install
 ```
@@ -58,4 +58,3 @@ of `struct sockaddr *` pointers.
 ## TODOs
 - Stop hard-coding `docker network create` CIDR (172.0.0.0/8) and `(podman|nerdctl) network create` CIDR (10.0.0.0/8)
 - Accelerate port forwarding (`(docker|podman|nerdctl) run -p`) as well
-- Rewrite in Go, perhaps
