@@ -21,8 +21,8 @@ cat <<EOF
       "names": [
         "connect",
         "bind",
-	"setsockopt",
-	"close"
+        "setsockopt",
+        "close"
       ],
       "action": "SCMP_ACT_NOTIFY"
     }
