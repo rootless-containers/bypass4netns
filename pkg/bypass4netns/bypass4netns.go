@@ -49,6 +49,15 @@ type seccompNotifAddFd struct {
 	newfdFlags uint32
 }
 
+func (addfd *seccompNotifAddFd) ioctlNotfiAddFd(notifFd libseccomp.ScmpFd) error {
+	ioctl_op := seccompIoctlNotifAddfd()
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(notifFd), ioctl_op, uintptr(unsafe.Pointer(addfd)))
+	if errno != 0 {
+		return fmt.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", errno)
+	}
+	return nil
+}
+
 func closeStateFds(recvFds []int) {
 	for i := range recvFds {
 		unix.Close(i)
@@ -238,6 +247,54 @@ type context struct {
 	resp    *libseccomp.ScmpNotifResp
 }
 
+// duplicateSocketOnHost duplicate socket in other process to socket on host.
+func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
+	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
+	if err != nil {
+		return 0, fmt.Errorf("pidfd Open failed: %s", err)
+	}
+	defer syscall.Close(int(targetPidfd))
+
+	sockfd, err := targetPidfd.GetFd(int(ctx.req.Data.Args[0]), 0)
+	if err != nil {
+		return 0, fmt.Errorf("pidfd GetFd failed: %s", err)
+	}
+	defer syscall.Close(sockfd)
+
+	logrus.Debugf("got sockfd=%v", sockfd)
+	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
+	if err != nil {
+		return 0, fmt.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
+	}
+
+	if sock_domain != syscall.AF_INET {
+		return 0, fmt.Errorf("expected AF_INET, got %d", sock_domain)
+	}
+
+	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+	if err != nil {
+		return 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
+	}
+
+	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
+	if err != nil {
+		return 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
+	}
+
+	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
+	if err != nil {
+		return 0, fmt.Errorf("socket failed: %s", err)
+	}
+
+	err = opts.configureSocket(ctx, sockfd2)
+	if err != nil {
+		syscall.Close(sockfd2)
+		return 0, fmt.Errorf("setsocketoptions failed: %s", err)
+	}
+
+	return sockfd2, nil
+}
+
 // handleSysConnect handles syscall connect(2).
 // If destination is outside of container network,
 // it creates and configures a socket on host.
@@ -267,6 +324,7 @@ func handleSysConnect(ctx *context, opts *socketOptions) {
 	err = binary.Read(reader, binary.LittleEndian, &addrInet)
 	if err != nil {
 		logrus.Errorf("Error casting byte array to RawSockaddrInet4: %s", err)
+		return
 	}
 
 	logrus.Debugf("%v", addrInet)
@@ -285,55 +343,12 @@ func handleSysConnect(ctx *context, opts *socketOptions) {
 		return
 	}
 
-	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
+	sockfd2, err := duplicateSocketOnHost(ctx, opts)
 	if err != nil {
-		logrus.Errorf("Pidfd Open failed: %s", err)
+		logrus.Errorf("duplicating socket failed: %s", err)
 		return
-	}
-	defer syscall.Close(int(targetPidfd))
-
-	sockfd, err := targetPidfd.GetFd(int(ctx.req.Data.Args[0]), 0)
-	if err != nil {
-		logrus.Errorf("Pidfd GetFd failed: %s", err)
-		return
-	}
-	defer syscall.Close(sockfd)
-
-	logrus.Debugf("got sockfd=%v", sockfd)
-	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
-		return
-	}
-
-	if sock_domain != syscall.AF_INET {
-		logrus.Errorf("expected AF_INET, got %d", sock_domain)
-		return
-	}
-
-	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_TYPE) failed: %s", err)
-		return
-	}
-
-	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
-		return
-	}
-
-	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
-	if err != nil {
-		logrus.Errorf("socket failed: %s", err)
 	}
 	defer syscall.Close(sockfd2)
-
-	err = opts.configureSocket(ctx, sockfd2)
-	if err != nil {
-		logrus.Errorf("setsocketoptions failed: %s", err)
-		return
-	}
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
@@ -343,10 +358,9 @@ func handleSysConnect(ctx *context, opts *socketOptions) {
 		newfdFlags: 0,
 	}
 
-	ioctl_op := seccompIoctlNotifAddfd()
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(ctx.notifFd), ioctl_op, uintptr(unsafe.Pointer(&addfd)))
-	if errno != 0 {
-		logrus.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", err)
+	err = addfd.ioctlNotfiAddFd(ctx.notifFd)
+	if err != nil {
+		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
 }
@@ -380,79 +394,25 @@ func handleSysBind(ctx *context, opts *socketOptions) {
 	err = binary.Read(reader, binary.LittleEndian, &addrInet)
 	if err != nil {
 		logrus.Errorf("Error casting byte array to RawSockaddrInet4: %s", err)
+		return
 	}
 
 	logrus.Debugf("%v", addrInet)
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
 	logrus.Infof("bind(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
 
+	// TODO: get port-fowrad mapping from nerdctl
 	if port != 5201 {
 		logrus.Infof("not mapped port=%d", port)
 		return
 	}
 
-	switch addrInet.Addr[0] {
-	case 127:
-		logrus.Infof("skipping local ip=%v", addrInet.Addr)
-		return
-	case 10:
-		logrus.Infof("skipping (possibly) (`podmain|nerdctl) network create` network ip=%v", addrInet.Addr)
-		return
-	case 172:
-		logrus.Infof("skipping (possibly) (`docker network create` network ip=%v", addrInet.Addr)
-		return
-	}
-
-	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
+	sockfd2, err := duplicateSocketOnHost(ctx, opts)
 	if err != nil {
-		logrus.Errorf("Pidfd Open failed: %s", err)
-		return
-	}
-	defer syscall.Close(int(targetPidfd))
-
-	sockfd, err := targetPidfd.GetFd(int(ctx.req.Data.Args[0]), 0)
-	if err != nil {
-		logrus.Errorf("Pidfd GetFd failed: %s", err)
-		return
-	}
-	defer syscall.Close(sockfd)
-
-	logrus.Debugf("got sockfd=%v", sockfd)
-	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
-		return
-	}
-
-	if sock_domain != syscall.AF_INET {
-		logrus.Errorf("expected AF_INET, got %d", sock_domain)
-		return
-	}
-
-	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_TYPE) failed: %s", err)
-		return
-	}
-
-	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
-	if err != nil {
-		logrus.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
-		return
-	}
-
-	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
-	if err != nil {
-		logrus.Errorf("socket failed: %s", err)
+		logrus.Errorf("duplicating socket failed: %s", err)
 		return
 	}
 	defer syscall.Close(sockfd2)
-
-	err = opts.configureSocket(ctx, sockfd2)
-	if err != nil {
-		logrus.Errorf("setsocketoptions failed: %s", err)
-		return
-	}
 
 	bind_addr := syscall.SockaddrInet4{
 		Port: int(8080),
@@ -473,12 +433,12 @@ func handleSysBind(ctx *context, opts *socketOptions) {
 		newfdFlags: 0,
 	}
 
-	ioctl_op := seccompIoctlNotifAddfd()
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(ctx.notifFd), ioctl_op, uintptr(unsafe.Pointer(&addfd)))
-	if errno != 0 {
-		logrus.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", err)
+	err = addfd.ioctlNotfiAddFd(ctx.notifFd)
+	if err != nil {
+		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
+
 	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
 }
 
