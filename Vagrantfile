@@ -29,9 +29,9 @@ Vagrant.configure("2") do |config|
      systemctl --user start dbus
 
      cd /vagrant
-     cd bypass4netns-go
-     go build
-     systemd-run --user --unit run-bypass4netns ./bypass4netns-go
+     make
+     sudo make install
+     systemd-run --user --unit run-bypass4netns bypass4netns
 
      curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
      containerd-rootless-setuptool.sh install

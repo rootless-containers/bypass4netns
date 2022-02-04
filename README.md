@@ -26,12 +26,11 @@ To be documented. See the code :)
 - runc >= 1.1
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
+- golang >= 1.17
 
 ## Compile
 
 ```console
-autoreconf -fis
-./configure
 make
 sudo make install
 ```

@@ -1,17 +1,12 @@
-package main
-
-// This code is copied from 'runc(https://github.com/opencontainers/runc/blob/v1.1.0/contrib/cmd/seccompagent/seccompagent.go)'
-// The code is licensed under Apach-2.0 License
+package bypass4netns
 
 import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -35,26 +30,29 @@ int get_size_of_seccomp_notif_addfd() {
 */
 import "C"
 
-var (
-	socketFile string
-	pidFile    string
-)
-
-func closeStateFds(recvFds []int) {
-	for i := range recvFds {
-		unix.Close(i)
-	}
-}
-
-func seccomp_iow(nr, typ uintptr) uintptr {
+func seccompIOW(nr, typ uintptr) uintptr {
 	return ioctl.IOW(uintptr(C.SECCOMP_IOC_MAGIC), nr, typ)
 }
 
 // C.SECCOMP_IOCTL_NOTIF_ADDFD become error
 // Error Message: could not determine kind of name for C.SECCOMP_IOCTL_NOTIF_ADDFD
 // TODO: use C.SECCOMP_IOCTL_NOTIF_ADDFD or add equivalent variable to libseccomp-go
-func seccomp_ioctl_notif_addfd() uintptr {
-	return seccomp_iow(3, uintptr(C.get_size_of_seccomp_notif_addfd()))
+func seccompIoctlNotifAddfd() uintptr {
+	return seccompIOW(3, uintptr(C.get_size_of_seccomp_notif_addfd()))
+}
+
+type seccompNotifAddFd struct {
+	id         uint64
+	flags      uint32
+	srcfd      uint32
+	newfd      uint32
+	newfdFlags uint32
+}
+
+func closeStateFds(recvFds []int) {
+	for i := range recvFds {
+		unix.Close(i)
+	}
 }
 
 // parseStateFds returns the seccomp-fd and closes the rest of the fds in recvFds.
@@ -97,6 +95,24 @@ func parseStateFds(stateFds []string, recvFds []int) (uintptr, error) {
 	}
 
 	return fd, nil
+}
+
+// readProcMem read data from memory of specified pid process at the spcified offset.
+func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
+	buffer := make([]byte, len) // PATH_MAX
+
+	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDONLY, 0o777)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(memfd)
+
+	size, err := unix.Pread(memfd, buffer, int64(offset))
+	if err != nil {
+		return nil, err
+	}
+
+	return buffer[:size], nil
 }
 
 func handleNewMessage(sockfd int) (uintptr, string, error) {
@@ -147,48 +163,86 @@ func handleNewMessage(sockfd int) (uintptr, string, error) {
 	return fd, containerProcessState.Metadata, nil
 }
 
-// readProcMem read data from memory of specified pid process at the spcified offset.
-func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
-	buffer := make([]byte, len) // PATH_MAX
-
-	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDONLY, 0o777)
-	if err != nil {
-		return nil, err
-	}
-	defer unix.Close(memfd)
-
-	size, err := unix.Pread(memfd, buffer, int64(offset))
-	if err != nil {
-		return nil, err
-	}
-
-	return buffer[:size], nil
-}
-
-type Context struct {
-	notifFd libseccomp.ScmpFd
-	req     *libseccomp.ScmpNotifReq
-	resp    *libseccomp.ScmpNotifResp
-}
-
-type SeccompNotifAddFd struct {
-	id         uint64
-	flags      uint32
-	srcfd      uint32
-	newfd      uint32
-	newfdFlags uint32
-}
-
-type SocketSetsockopt struct {
+type socketOption struct {
 	level   uint64
 	optname uint64
 	optval  []byte
 	optlen  uint64
 }
 
-type SocketOptionsMap = map[string][]SocketSetsockopt
+type socketOptions struct {
+	options map[string][]socketOption
+}
 
-func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
+// configureSocket set recorded socket options.
+func (opts *socketOptions) configureSocket(ctx *context, sockfd int) error {
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
+	optValues, ok := opts.options[key]
+	if !ok {
+		return nil
+	}
+	for _, optVal := range optValues {
+		_, _, errno := syscall.Syscall6(syscall.SYS_SETSOCKOPT, uintptr(sockfd), uintptr(optVal.level), uintptr(optVal.optname), uintptr(unsafe.Pointer(&optVal.optval[0])), uintptr(optVal.optlen), 0)
+		if errno != 0 {
+			return fmt.Errorf("setsockopt failed(%v): %s", optVal, errno)
+		}
+		logrus.Debugf("configured socket option pid=%d sockfd=%d (%v)", ctx.req.Pid, sockfd, optVal)
+	}
+
+	return nil
+}
+
+// recordSocketOption records socket option.
+func (opts *socketOptions) recordSocketOption(ctx *context) error {
+	sockfd := ctx.req.Data.Args[0]
+	level := ctx.req.Data.Args[1]
+	optname := ctx.req.Data.Args[2]
+	optlen := ctx.req.Data.Args[4]
+	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
+	if err != nil {
+		return fmt.Errorf("readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+	}
+
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
+	_, ok := opts.options[key]
+	if !ok {
+		opts.options[key] = make([]socketOption, 0)
+	}
+
+	value := socketOption{
+		level:   level,
+		optname: optname,
+		optval:  optval,
+		optlen:  optlen,
+	}
+	opts.options[key] = append(opts.options[key], value)
+
+	logrus.Debugf("recorded socket option sockfd=%d level=%d optname=%d optval=%v optlen=%d", sockfd, level, optname, optval, optlen)
+	return nil
+}
+
+// deleteSocketOptions delete recorded socket options
+func (opts *socketOptions) deleteSocketOptions(ctx *context) {
+	sockfd := ctx.req.Data.Args[0]
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
+	_, ok := opts.options[key]
+	if ok {
+		delete(opts.options, key)
+		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
+	}
+}
+
+type context struct {
+	notifFd libseccomp.ScmpFd
+	req     *libseccomp.ScmpNotifReq
+	resp    *libseccomp.ScmpNotifResp
+}
+
+// handleSysConnect handles syscall connect(2).
+// If destination is outside of container network,
+// it creates and configures a socket on host.
+// Then, handler replaces container's socket to created one.
+func handleSysConnect(ctx *context, opts *socketOptions) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -226,9 +280,9 @@ func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
 	case 10:
 		logrus.Infof("skipping (possibly) (`podmain|nerdctl) network create` network ip=%v", addrInet.Addr)
 		return
-		//case 172:
-		//	logrus.Infof("skipping (possibly) (`docker network create` network ip=%v", addrInet.Addr)
-		//	return
+	case 172:
+		logrus.Infof("skipping (possibly) (`docker network create` network ip=%v", addrInet.Addr)
+		return
 	}
 
 	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
@@ -275,13 +329,13 @@ func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
 	}
 	defer syscall.Close(sockfd2)
 
-	err = setSocketoptions(ctx, sockfd2, optmap)
+	err = opts.configureSocket(ctx, sockfd2)
 	if err != nil {
 		logrus.Errorf("setsocketoptions failed: %s", err)
 		return
 	}
 
-	addfd := SeccompNotifAddFd{
+	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
 		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
 		srcfd:      uint32(sockfd2),
@@ -289,8 +343,7 @@ func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
 		newfdFlags: 0,
 	}
 
-	ioctl_op := seccomp_ioctl_notif_addfd()
-	logrus.Debugf("ioctl_op:%v", ioctl_op)
+	ioctl_op := seccompIoctlNotifAddfd()
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(ctx.notifFd), ioctl_op, uintptr(unsafe.Pointer(&addfd)))
 	if errno != 0 {
 		logrus.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", err)
@@ -298,7 +351,11 @@ func handleSysConnect(ctx *Context, optmap SocketOptionsMap) {
 	}
 }
 
-func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
+// handleSysBind handles syscall bind(2).
+// If binding port is the target of port-forwarding,
+// it creates and configures including bind(2) a socket on host.
+// Then, handler replaces container's socket to created one.
+func handleSysBind(ctx *context, opts *socketOptions) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -391,7 +448,7 @@ func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
 	}
 	defer syscall.Close(sockfd2)
 
-	err = setSocketoptions(ctx, sockfd2, optmap)
+	err = opts.configureSocket(ctx, sockfd2)
 	if err != nil {
 		logrus.Errorf("setsocketoptions failed: %s", err)
 		return
@@ -408,7 +465,7 @@ func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
 		return
 	}
 
-	addfd := SeccompNotifAddFd{
+	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
 		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
 		srcfd:      uint32(sockfd2),
@@ -416,8 +473,7 @@ func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
 		newfdFlags: 0,
 	}
 
-	ioctl_op := seccomp_ioctl_notif_addfd()
-	logrus.Debugf("ioctl_op:%v", ioctl_op)
+	ioctl_op := seccompIoctlNotifAddfd()
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(ctx.notifFd), ioctl_op, uintptr(unsafe.Pointer(&addfd)))
 	if errno != 0 {
 		logrus.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", err)
@@ -426,62 +482,25 @@ func handleSysBind(ctx *Context, optmap SocketOptionsMap) {
 	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
 }
 
-func setSocketoptions(ctx *Context, sockfd int, optmap SocketOptionsMap) error {
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	optValues, ok := optmap[key]
-	if !ok {
-		return nil
-	}
-	for _, optVal := range optValues {
-		_, _, errno := syscall.Syscall6(syscall.SYS_SETSOCKOPT, uintptr(sockfd), uintptr(optVal.level), uintptr(optVal.optname), uintptr(unsafe.Pointer(&optVal.optval[0])), uintptr(optVal.optlen), 0)
-		if errno != 0 {
-			return fmt.Errorf("setsockopt failed(%v): %s", optVal, errno)
-		}
-		logrus.Debugf("configured socket option pid=%d sockfd=%d (%v)", ctx.req.Pid, sockfd, optVal)
-	}
-
-	return nil
-}
-
-func handleSysSetsockopt(ctx *Context, optmap SocketOptionsMap) {
-	sockfd := ctx.req.Data.Args[0]
-	level := ctx.req.Data.Args[1]
-	optname := ctx.req.Data.Args[2]
-	optlen := ctx.req.Data.Args[4]
-	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
+// handleSyssetsockopt handles `setsockopt(2)` and records options.
+// Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
+func handleSysSetsockopt(ctx *context, opts *socketOptions) {
+	logrus.Debugf("setsockopt(pid=%d): sockfd=%d", ctx.req.Pid, ctx.req.Data.Args[0])
+	err := opts.recordSocketOption(ctx)
 	if err != nil {
-		logrus.Errorf("Error readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
-		return
+		logrus.Errorf("recordSocketOption failed: %s", err)
 	}
-
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := optmap[key]
-	if !ok {
-		optmap[key] = make([]SocketSetsockopt, 0)
-	}
-
-	value := SocketSetsockopt{
-		level:   level,
-		optname: optname,
-		optval:  optval,
-		optlen:  optlen,
-	}
-	optmap[key] = append(optmap[key], value)
-	logrus.Infof("setsockopt(pid=%d): sockfd=%d, level=%d, optname=%d optval=%v", ctx.req.Pid, ctx.req.Data.Args[0], level, optname, optval)
 }
 
-func handleSysClose(ctx *Context, optmap SocketOptionsMap) {
+// handleSysClose handles `close(2)` and delete recorded socket options.
+func handleSysClose(ctx *context, opts *socketOptions) {
 	sockfd := ctx.req.Data.Args[0]
 	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := optmap[key]
-	if ok {
-		delete(optmap, key)
-		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
-	}
+	opts.deleteSocketOptions(ctx)
 }
 
-func handleReq(ctx *Context, optmap SocketOptionsMap) {
+// handleReq handles seccomp notif requests and configures responses.
+func handleReq(ctx *context, opts *socketOptions) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
 	if err != nil {
 		logrus.Errorf("Error decoding syscall %v(): %s", ctx.req.Data.Syscall, err)
@@ -494,14 +513,14 @@ func handleReq(ctx *Context, optmap SocketOptionsMap) {
 
 	switch syscallName {
 	case "connect":
-		handleSysConnect(ctx, optmap)
+		handleSysConnect(ctx, opts)
 	case "bind":
-		handleSysBind(ctx, optmap)
+		handleSysBind(ctx, opts)
 	case "setsockopt":
-		handleSysSetsockopt(ctx, optmap)
+		handleSysSetsockopt(ctx, opts)
 	case "close":
 		// handling close(2) may cause performance degradation
-		handleSysClose(ctx, optmap)
+		handleSysClose(ctx, opts)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
@@ -510,10 +529,13 @@ func handleReq(ctx *Context, optmap SocketOptionsMap) {
 
 }
 
-// notifHandler handles seccomp notifications and responses
+// notifHandler handles seccomp notifications and response to them.
 func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 	defer unix.Close(int(fd))
-	optmap := SocketOptionsMap{}
+	opts := socketOptions{
+		options: map[string][]socketOption{},
+	}
+
 	for {
 		req, err := libseccomp.NotifReceive(fd)
 		if err != nil {
@@ -521,7 +543,7 @@ func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 			continue
 		}
 
-		ctx := Context{
+		ctx := context{
 			notifFd: fd,
 			req:     req,
 			resp: &libseccomp.ScmpNotifResp{
@@ -538,7 +560,7 @@ func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 			continue
 		}
 
-		handleReq(&ctx, optmap)
+		handleReq(&ctx, &opts)
 
 		if err = libseccomp.NotifRespond(fd, ctx.resp); err != nil {
 			logrus.Errorf("Error in notification response: %s", err)
@@ -547,32 +569,23 @@ func notifHandler(fd libseccomp.ScmpFd, metadata string) {
 	}
 }
 
-func main() {
-	xdg_runtime_dir := os.Getenv("XDG_RUNTIME_DIR")
-	flag.StringVar(&socketFile, "socketfile", xdg_runtime_dir+"/bypass4netns.sock", "Socket file")
-	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
-	logrus.SetLevel(logrus.DebugLevel)
+type Handler struct {
+	socketPath string
+}
 
-	// Parse arguments
-	flag.Parse()
-	if flag.NArg() > 0 {
-		flag.PrintDefaults()
-		logrus.Fatal("Invalid command")
+// NewHandler creates new seccomp notif handler
+func NewHandler(socketPath string) *Handler {
+	handler := Handler{
+		socketPath: socketPath,
 	}
 
-	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-		logrus.Fatalf("Cannot cleanup socket file: %v", err)
-	}
+	return &handler
+}
 
-	if pidFile != "" {
-		pid := fmt.Sprintf("%d", os.Getpid())
-		if err := os.WriteFile(pidFile, []byte(pid), 0o644); err != nil {
-			logrus.Fatalf("Cannot write pid file: %v", err)
-		}
-	}
-
+// StartHandle starts seccomp notif handler
+func (h *Handler) StartHandle() {
 	logrus.Info("Waiting for seccomp file descriptors")
-	l, err := net.Listen("unix", socketFile)
+	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
 		logrus.Fatalf("Cannot listen: %s", err)
 	}

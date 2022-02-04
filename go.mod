@@ -1,4 +1,4 @@
-module github.com/rootless-containers/bypass4netns/bypass4netns-go
+module github.com/rootless-containers/bypass4netns
 
 go 1.17
 
