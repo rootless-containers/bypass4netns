@@ -548,7 +548,7 @@ func (h *Handler) StartHandle() {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
-		logrus.Fatalf("Cannot listen: %s", err)
+		logrus.Fatalf("Cannot listen: %w", err)
 	}
 	defer l.Close()
 
