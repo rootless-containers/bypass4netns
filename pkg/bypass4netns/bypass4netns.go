@@ -144,17 +144,27 @@ type context struct {
 	resp    *libseccomp.ScmpNotifResp
 }
 
-// duplicateSocketOnHost duplicate socket in other process to socket on host.
-func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
-	targetPidfd, err := pidfd.Open(int(ctx.req.Pid), 0)
+// getFdInProcess get the file descriptor in other process
+func getFdInProcess(pid, targetFd int) (int, error) {
+	targetPidfd, err := pidfd.Open(int(pid), 0)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd Open failed: %s", err)
 	}
 	defer syscall.Close(int(targetPidfd))
 
-	sockfd, err := targetPidfd.GetFd(int(ctx.req.Data.Args[0]), 0)
+	fd, err := targetPidfd.GetFd(targetFd, 0)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd GetFd failed: %s", err)
+	}
+
+	return fd, nil
+}
+
+// duplicateSocketOnHost duplicate socket in other process to socket on host.
+func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
+	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+	if err != nil {
+		return 0, err
 	}
 	defer syscall.Close(sockfd)
 
