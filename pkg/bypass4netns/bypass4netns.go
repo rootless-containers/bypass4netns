@@ -50,7 +50,7 @@ type seccompNotifAddFd struct {
 	newfdFlags uint32
 }
 
-func (addfd *seccompNotifAddFd) ioctlNotfiAddFd(notifFd libseccomp.ScmpFd) error {
+func (addfd *seccompNotifAddFd) ioctlNotifAddFd(notifFd libseccomp.ScmpFd) error {
 	ioctl_op := seccompIoctlNotifAddfd()
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(notifFd), ioctl_op, uintptr(unsafe.Pointer(addfd)))
 	if errno != 0 {
@@ -359,7 +359,7 @@ func handleSysConnect(ctx *context, opts *socketOptions) {
 		newfdFlags: 0,
 	}
 
-	err = addfd.ioctlNotfiAddFd(ctx.notifFd)
+	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
 		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
@@ -434,7 +434,7 @@ func handleSysBind(ctx *context, opts *socketOptions) {
 		newfdFlags: 0,
 	}
 
-	err = addfd.ioctlNotfiAddFd(ctx.notifFd)
+	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
 		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
