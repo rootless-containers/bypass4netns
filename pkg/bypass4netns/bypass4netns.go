@@ -10,8 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -493,7 +491,7 @@ func handleReq(ctx *context, opts *socketOptions) {
 }
 
 // notifHandler handles seccomp notifications and response to them.
-func notifHandler(fd libseccomp.ScmpFd, metadata string) {
+func notifHandler(fd libseccomp.ScmpFd) {
 	defer unix.Close(int(fd))
 	opts := socketOptions{
 		options: map[string][]socketOption{},
@@ -566,23 +564,14 @@ func (h *Handler) StartHandle() {
 			logrus.Errorf("Cannot get socket: %v", err)
 			continue
 		}
-		newFd, metadata, err := handleNewMessage(int(socket.Fd()))
+		newFd, _, err := handleNewMessage(int(socket.Fd()))
 		socket.Close()
 		if err != nil {
 			logrus.Errorf("Error receiving seccomp file descriptor: %v", err)
 			continue
 		}
 
-		// Make sure we don't allow strings like "/../p", as that means
-		// a file in a different location than expected. We just want
-		// safe things to use as a suffix for a file name.
-		metadata = filepath.Base(metadata)
-		if strings.Contains(metadata, "/") {
-			// Fallback to a safe string.
-			metadata = "agent-generated-suffix"
-		}
-
 		logrus.Infof("Received new seccomp fd: %v", newFd)
-		go notifHandler(libseccomp.ScmpFd(newFd), metadata)
+		go notifHandler(libseccomp.ScmpFd(newFd))
 	}
 }
