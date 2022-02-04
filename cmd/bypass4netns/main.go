@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/sirupsen/logrus"
@@ -16,8 +17,12 @@ var (
 )
 
 func main() {
-	xdg_runtime_dir := os.Getenv("XDG_RUNTIME_DIR")
-	flag.StringVar(&socketFile, "socketfile", xdg_runtime_dir+"/bypass4netns.sock", "Socket file")
+	xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if xdgRuntimeDir == "" {
+		panic("$XDG_RUNTIME_DIR needs to be set")
+	}
+
+	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netns.sock"), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	logrus.SetLevel(logrus.DebugLevel)
 
