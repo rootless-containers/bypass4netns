@@ -11,53 +11,18 @@ import (
 	"fmt"
 	"net"
 	"syscall"
-	"unsafe"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
-	"github.com/vtolstov/go-ioctl"
 	"golang.org/x/sys/unix"
 )
 
 /*
-#include <linux/types.h>
 #include <seccomp.h>
-
-int get_size_of_seccomp_notif_addfd() {
-	return sizeof(struct seccomp_notif_addfd);
-}
 */
 import "C"
-
-func seccompIOW(nr, typ uintptr) uintptr {
-	return ioctl.IOW(uintptr(C.SECCOMP_IOC_MAGIC), nr, typ)
-}
-
-// C.SECCOMP_IOCTL_NOTIF_ADDFD become error
-// Error Message: could not determine kind of name for C.SECCOMP_IOCTL_NOTIF_ADDFD
-// TODO: use C.SECCOMP_IOCTL_NOTIF_ADDFD or add equivalent variable to libseccomp-go
-func seccompIoctlNotifAddfd() uintptr {
-	return seccompIOW(3, uintptr(C.get_size_of_seccomp_notif_addfd()))
-}
-
-type seccompNotifAddFd struct {
-	id         uint64
-	flags      uint32
-	srcfd      uint32
-	newfd      uint32
-	newfdFlags uint32
-}
-
-func (addfd *seccompNotifAddFd) ioctlNotifAddFd(notifFd libseccomp.ScmpFd) error {
-	ioctl_op := seccompIoctlNotifAddfd()
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(notifFd), ioctl_op, uintptr(unsafe.Pointer(addfd)))
-	if errno != 0 {
-		return fmt.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", errno)
-	}
-	return nil
-}
 
 func closeStateFds(recvFds []int) {
 	for i := range recvFds {
@@ -171,75 +136,6 @@ func handleNewMessage(sockfd int) (uintptr, string, error) {
 	}
 
 	return fd, containerProcessState.Metadata, nil
-}
-
-type socketOption struct {
-	level   uint64
-	optname uint64
-	optval  []byte
-	optlen  uint64
-}
-
-type socketOptions struct {
-	options map[string][]socketOption
-}
-
-// configureSocket set recorded socket options.
-func (opts *socketOptions) configureSocket(ctx *context, sockfd int) error {
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	optValues, ok := opts.options[key]
-	if !ok {
-		return nil
-	}
-	for _, optVal := range optValues {
-		_, _, errno := syscall.Syscall6(syscall.SYS_SETSOCKOPT, uintptr(sockfd), uintptr(optVal.level), uintptr(optVal.optname), uintptr(unsafe.Pointer(&optVal.optval[0])), uintptr(optVal.optlen), 0)
-		if errno != 0 {
-			return fmt.Errorf("setsockopt failed(%v): %s", optVal, errno)
-		}
-		logrus.Debugf("configured socket option pid=%d sockfd=%d (%v)", ctx.req.Pid, sockfd, optVal)
-	}
-
-	return nil
-}
-
-// recordSocketOption records socket option.
-func (opts *socketOptions) recordSocketOption(ctx *context) error {
-	sockfd := ctx.req.Data.Args[0]
-	level := ctx.req.Data.Args[1]
-	optname := ctx.req.Data.Args[2]
-	optlen := ctx.req.Data.Args[4]
-	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
-	if err != nil {
-		return fmt.Errorf("readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
-	}
-
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := opts.options[key]
-	if !ok {
-		opts.options[key] = make([]socketOption, 0)
-	}
-
-	value := socketOption{
-		level:   level,
-		optname: optname,
-		optval:  optval,
-		optlen:  optlen,
-	}
-	opts.options[key] = append(opts.options[key], value)
-
-	logrus.Debugf("recorded socket option sockfd=%d level=%d optname=%d optval=%v optlen=%d", sockfd, level, optname, optval, optlen)
-	return nil
-}
-
-// deleteSocketOptions delete recorded socket options
-func (opts *socketOptions) deleteSocketOptions(ctx *context) {
-	sockfd := ctx.req.Data.Args[0]
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := opts.options[key]
-	if ok {
-		delete(opts.options, key)
-		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
-	}
 }
 
 type context struct {
