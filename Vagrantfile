@@ -58,11 +58,11 @@ Vagrant.configure("2") do |config|
      systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8"
     )
 
-    echo "===== connect(2) test ====="
+    echo "===== connect(2),sendto(2) test ====="
     (
      set -x
      cd /vagrant/test
-     /bin/bash test_connect.sh /tmp/seccomp.json $(cat /tmp/host_ip)
+     /bin/bash test.sh /tmp/seccomp.json $(cat /tmp/host_ip)
     )
 
     echo "===== Benchmark: netns -> host With bypass4netns ====="
