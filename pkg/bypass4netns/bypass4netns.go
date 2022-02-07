@@ -277,6 +277,10 @@ func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
 		return 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
 	}
 
+	if sock_type != syscall.SOCK_STREAM {
+		return 0, fmt.Errorf("only SOCK_STREAM is supported")
+	}
+
 	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
 	if err != nil {
 		return 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
