@@ -299,55 +299,6 @@ func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, 
 	}
 }
 
-// handleSysConnect handles syscall connect(2).
-// If destination is outside of container network,
-// it creates and configures a socket on host.
-// Then, handler replaces container's socket to created one.
-func (h *notifHandler) handleSysConnect(ctx *context) {
-	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
-	if err != nil {
-		logrus.Errorf("failed to read addrInet4 from process: %s", err)
-		return
-	}
-
-	logrus.Debugf("%v", addrInet)
-	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logrus.Infof("connect(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
-
-	// TODO: more sophisticated way to convert.
-	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	logPrefix := fmt.Sprintf("connect(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
-
-	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
-
-	if !cont {
-		return
-	}
-
-	// configure socket if switched
-	err = h.socketInfo.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		logrus.Errorf("setsocketoptions failed: %s", err)
-		return
-	}
-
-	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
-		srcfd:      uint32(sockfd2),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
-	}
-
-	err = addfd.ioctlNotifAddFd(ctx.notifFd)
-	if err != nil {
-		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
-		return
-	}
-}
-
 // handleSysBind handles syscall bind(2).
 // If binding port is the target of port-forwarding,
 // it creates and configures including bind(2) a socket on host.
@@ -412,6 +363,62 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
 }
 
+// handleSysClose handles `close(2)` and delete recorded socket options.
+func (h *notifHandler) handleSysClose(ctx *context) {
+	sockfd := ctx.req.Data.Args[0]
+	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
+	h.socketInfo.deleteSocket(ctx)
+}
+
+// handleSysConnect handles syscall connect(2).
+// If destination is outside of container network,
+// it creates and configures a socket on host.
+// Then, handler replaces container's socket to created one.
+func (h *notifHandler) handleSysConnect(ctx *context) {
+	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	if err != nil {
+		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		return
+	}
+
+	logrus.Debugf("%v", addrInet)
+	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
+	logrus.Infof("connect(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+
+	// TODO: more sophisticated way to convert.
+	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	logPrefix := fmt.Sprintf("connect(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
+
+	// Retrieve next injecting file descriptor
+	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+
+	if !cont {
+		return
+	}
+
+	// configure socket if switched
+	err = h.socketInfo.configureSocket(ctx, sockfd2)
+	if err != nil {
+		syscall.Close(sockfd2)
+		logrus.Errorf("setsocketoptions failed: %s", err)
+		return
+	}
+
+	addfd := seccompNotifAddFd{
+		id:         ctx.req.ID,
+		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		srcfd:      uint32(sockfd2),
+		newfd:      uint32(ctx.req.Data.Args[0]),
+		newfdFlags: 0,
+	}
+
+	err = addfd.ioctlNotifAddFd(ctx.notifFd)
+	if err != nil {
+		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		return
+	}
+}
+
 // handleSyssetsockopt handles `setsockopt(2)` and records options.
 // Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
 func (h *notifHandler) handleSysSetsockopt(ctx *context) {
@@ -420,13 +427,6 @@ func (h *notifHandler) handleSysSetsockopt(ctx *context) {
 	if err != nil {
 		logrus.Errorf("recordSocketOption failed: %s", err)
 	}
-}
-
-// handleSysClose handles `close(2)` and delete recorded socket options.
-func (h *notifHandler) handleSysClose(ctx *context) {
-	sockfd := ctx.req.Data.Args[0]
-	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
-	h.socketInfo.deleteSocket(ctx)
 }
 
 // handleReq handles seccomp notif requests and configures responses.
@@ -442,15 +442,15 @@ func (h *notifHandler) handleReq(ctx *context) {
 	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
 
 	switch syscallName {
-	case "connect":
-		h.handleSysConnect(ctx)
 	case "bind":
 		h.handleSysBind(ctx)
-	case "setsockopt":
-		h.handleSysSetsockopt(ctx)
 	case "close":
 		// handling close(2) may cause performance degradation
 		h.handleSysClose(ctx)
+	case "connect":
+		h.handleSysConnect(ctx)
+	case "setsockopt":
+		h.handleSysSetsockopt(ctx)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
