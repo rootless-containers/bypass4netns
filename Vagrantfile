@@ -31,7 +31,6 @@ Vagrant.configure("2") do |config|
      cd /vagrant
      make
      sudo make install
-     systemd-run --user --unit run-bypass4netns bypass4netns
 
      curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
      containerd-rootless-setuptool.sh install
@@ -42,6 +41,21 @@ Vagrant.configure("2") do |config|
      hostname -I | awk '{print $1}' | tee /tmp/host_ip
      /vagrant/test/seccomp.json.sh | tee /tmp/seccomp.json
 
+     systemd-run --user --unit run-iperf3 iperf3 -s
+    )
+
+    echo "===== `--ignore` option test ====="
+    (
+     set -x
+     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,192.168.6.0/24"
+     nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test "${ALPINE_IMAGE}" sleep infinity
+     nerdctl exec test apk add --no-cache iperf3
+     nerdctl exec test iperf3 -c $(cat /tmp/host_ip)
+     # TODO: this check is dirty. we want better method to check the connect(2) is ignored.
+     journalctl --user -u run-bypass4netns.service | grep "is ignored, skipping."
+     nerdctl rm -f test
+     systemctl --user stop run-bypass4netns.service
+     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8"
     )
 
     echo "===== connect(2) test ====="
@@ -54,7 +68,6 @@ Vagrant.configure("2") do |config|
     echo "===== Benchmark: netns -> host With bypass4netns ====="
     (
      set -x
-     systemd-run --user --unit run-iperf3 iperf3 -s
      nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test "${ALPINE_IMAGE}" sleep infinity
      nerdctl exec test apk add --no-cache iperf3
      nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"

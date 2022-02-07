@@ -4,16 +4,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	socketFile string
-	pidFile    string
+	socketFile     string
+	pidFile        string
+	ignoredSubnets string
 )
 
 func main() {
@@ -24,6 +27,7 @@ func main() {
 
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netns.sock"), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
+	flag.StringVar(&ignoredSubnets, "ignore", "127.0.0.0/8", "Subnets to ignore in bypass4netns")
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Parse arguments
@@ -44,6 +48,17 @@ func main() {
 		}
 	}
 
+	subnets := []net.IPNet{}
+	for _, subnetStr := range strings.Split(ignoredSubnets, ",") {
+		_, subnet, err := net.ParseCIDR(subnetStr)
+		if err != nil {
+			logrus.Fatalf("%s is not CIDR format", subnetStr)
+		}
+		subnets = append(subnets, *subnet)
+		logrus.Debugf("%s is added to ignore", subnet)
+	}
+
 	handler := bypass4netns.NewHandler(socketFile)
+	handler.SetIgnoredSubnets(subnets)
 	handler.StartHandle()
 }

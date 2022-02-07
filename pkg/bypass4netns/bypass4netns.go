@@ -304,7 +304,7 @@ func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
 // If destination is outside of container network,
 // it creates and configures a socket on host.
 // Then, handler replaces container's socket to created one.
-func handleSysConnect(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleSysConnect(ctx *context, opts *socketOptions) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -336,15 +336,10 @@ func handleSysConnect(ctx *context, opts *socketOptions) {
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
 	logrus.Infof("connect(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
 
-	switch addrInet.Addr[0] {
-	case 127:
-		logrus.Infof("skipping local ip=%v", addrInet.Addr)
-		return
-	case 10:
-		logrus.Infof("skipping (possibly) (`podmain|nerdctl) network create` network ip=%v", addrInet.Addr)
-		return
-	case 172:
-		logrus.Infof("skipping (possibly) (`docker network create` network ip=%v", addrInet.Addr)
+	// TODO: more sophisticated way to convert.
+	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	if h.isIgnored(ipAddr) {
+		logrus.Infof("%s is ignored, skipping.", ipAddr.String())
 		return
 	}
 
@@ -465,7 +460,7 @@ func handleSysClose(ctx *context, opts *socketOptions) {
 }
 
 // handleReq handles seccomp notif requests and configures responses.
-func handleReq(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleReq(ctx *context, opts *socketOptions) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
 	if err != nil {
 		logrus.Errorf("Error decoding syscall %v(): %s", ctx.req.Data.Syscall, err)
@@ -478,7 +473,7 @@ func handleReq(ctx *context, opts *socketOptions) {
 
 	switch syscallName {
 	case "connect":
-		handleSysConnect(ctx, opts)
+		h.handleSysConnect(ctx, opts)
 	case "bind":
 		handleSysBind(ctx, opts)
 	case "setsockopt":
@@ -495,21 +490,21 @@ func handleReq(ctx *context, opts *socketOptions) {
 }
 
 // notifHandler handles seccomp notifications and response to them.
-func notifHandler(fd libseccomp.ScmpFd) {
-	defer unix.Close(int(fd))
+func (h *notifHandler) handle() {
+	defer unix.Close(int(h.fd))
 	opts := socketOptions{
 		options: map[string][]socketOption{},
 	}
 
 	for {
-		req, err := libseccomp.NotifReceive(fd)
+		req, err := libseccomp.NotifReceive(h.fd)
 		if err != nil {
 			logrus.Errorf("Error in NotifReceive(): %s", err)
 			continue
 		}
 
 		ctx := context{
-			notifFd: fd,
+			notifFd: h.fd,
 			req:     req,
 			resp: &libseccomp.ScmpNotifResp{
 				ID:    req.ID,
@@ -520,14 +515,14 @@ func notifHandler(fd libseccomp.ScmpFd) {
 		}
 
 		// TOCTOU check
-		if err := libseccomp.NotifIDValid(fd, req.ID); err != nil {
+		if err := libseccomp.NotifIDValid(h.fd, req.ID); err != nil {
 			logrus.Errorf("TOCTOU check failed: req.ID is no longer valid: %s", err)
 			continue
 		}
 
-		handleReq(&ctx, &opts)
+		h.handleReq(&ctx, &opts)
 
-		if err = libseccomp.NotifRespond(fd, ctx.resp); err != nil {
+		if err = libseccomp.NotifRespond(h.fd, ctx.resp); err != nil {
 			logrus.Errorf("Error in notification response: %s", err)
 			continue
 		}
@@ -535,16 +530,49 @@ func notifHandler(fd libseccomp.ScmpFd) {
 }
 
 type Handler struct {
-	socketPath string
+	socketPath     string
+	ignoredSubnets []net.IPNet
 }
 
 // NewHandler creates new seccomp notif handler
 func NewHandler(socketPath string) *Handler {
 	handler := Handler{
-		socketPath: socketPath,
+		socketPath:     socketPath,
+		ignoredSubnets: []net.IPNet{},
 	}
 
 	return &handler
+}
+
+// SetIgnoreSubnets configures subnets to ignore in bypass4netns.
+func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet) {
+	h.ignoredSubnets = subnets
+}
+
+type notifHandler struct {
+	fd             libseccomp.ScmpFd
+	ignoredSubnets []net.IPNet
+}
+
+func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
+	notifHandler := notifHandler{
+		fd: libseccomp.ScmpFd(fd),
+	}
+	notifHandler.ignoredSubnets = make([]net.IPNet, len(h.ignoredSubnets))
+	// Deep copy []net.IPNet because each thread accesses it.
+	copy(notifHandler.ignoredSubnets, h.ignoredSubnets)
+	return &notifHandler
+}
+
+// isIgnored checks the IP address is ignored.
+func (h *notifHandler) isIgnored(ip net.IP) bool {
+	for _, subnet := range h.ignoredSubnets {
+		if subnet.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // StartHandle starts seccomp notif handler
@@ -576,6 +604,7 @@ func (h *Handler) StartHandle() {
 		}
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
-		go notifHandler(libseccomp.ScmpFd(newFd))
+		notifHandler := h.newNotifHandler(newFd)
+		go notifHandler.handle()
 	}
 }
