@@ -200,7 +200,7 @@ func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
 // If destination is outside of container network,
 // it creates and configures a socket on host.
 // Then, handler replaces container's socket to created one.
-func (h *notifHandler) handleSysConnect(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleSysConnect(ctx *context) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -239,7 +239,7 @@ func (h *notifHandler) handleSysConnect(ctx *context, opts *socketOptions) {
 		return
 	}
 
-	sockfd2, err := duplicateSocketOnHost(ctx, opts)
+	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketOptions)
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
@@ -265,7 +265,7 @@ func (h *notifHandler) handleSysConnect(ctx *context, opts *socketOptions) {
 // If binding port is the target of port-forwarding,
 // it creates and configures including bind(2) a socket on host.
 // Then, handler replaces container's socket to created one.
-func handleSysBind(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleSysBind(ctx *context) {
 	addrlen := ctx.req.Data.Args[2]
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
 	if err != nil {
@@ -303,7 +303,7 @@ func handleSysBind(ctx *context, opts *socketOptions) {
 		return
 	}
 
-	sockfd2, err := duplicateSocketOnHost(ctx, opts)
+	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketOptions)
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
@@ -340,23 +340,23 @@ func handleSysBind(ctx *context, opts *socketOptions) {
 
 // handleSyssetsockopt handles `setsockopt(2)` and records options.
 // Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
-func handleSysSetsockopt(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleSysSetsockopt(ctx *context) {
 	logrus.Debugf("setsockopt(pid=%d): sockfd=%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	err := opts.recordSocketOption(ctx)
+	err := h.socketOptions.recordSocketOption(ctx)
 	if err != nil {
 		logrus.Errorf("recordSocketOption failed: %s", err)
 	}
 }
 
 // handleSysClose handles `close(2)` and delete recorded socket options.
-func handleSysClose(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleSysClose(ctx *context) {
 	sockfd := ctx.req.Data.Args[0]
 	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
-	opts.deleteSocketOptions(ctx)
+	h.socketOptions.deleteSocketOptions(ctx)
 }
 
 // handleReq handles seccomp notif requests and configures responses.
-func (h *notifHandler) handleReq(ctx *context, opts *socketOptions) {
+func (h *notifHandler) handleReq(ctx *context) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
 	if err != nil {
 		logrus.Errorf("Error decoding syscall %v(): %s", ctx.req.Data.Syscall, err)
@@ -369,14 +369,14 @@ func (h *notifHandler) handleReq(ctx *context, opts *socketOptions) {
 
 	switch syscallName {
 	case "connect":
-		h.handleSysConnect(ctx, opts)
+		h.handleSysConnect(ctx)
 	case "bind":
-		handleSysBind(ctx, opts)
+		h.handleSysBind(ctx)
 	case "setsockopt":
-		handleSysSetsockopt(ctx, opts)
+		h.handleSysSetsockopt(ctx)
 	case "close":
 		// handling close(2) may cause performance degradation
-		handleSysClose(ctx, opts)
+		h.handleSysClose(ctx)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
@@ -388,9 +388,6 @@ func (h *notifHandler) handleReq(ctx *context, opts *socketOptions) {
 // notifHandler handles seccomp notifications and response to them.
 func (h *notifHandler) handle() {
 	defer unix.Close(int(h.fd))
-	opts := socketOptions{
-		options: map[string][]socketOption{},
-	}
 
 	for {
 		req, err := libseccomp.NotifReceive(h.fd)
@@ -416,7 +413,7 @@ func (h *notifHandler) handle() {
 			continue
 		}
 
-		h.handleReq(&ctx, &opts)
+		h.handleReq(&ctx)
 
 		if err = libseccomp.NotifRespond(h.fd, ctx.resp); err != nil {
 			logrus.Errorf("Error in notification response: %s", err)
@@ -448,11 +445,15 @@ func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet) {
 type notifHandler struct {
 	fd             libseccomp.ScmpFd
 	ignoredSubnets []net.IPNet
+	socketOptions  socketOptions
 }
 
 func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
 	notifHandler := notifHandler{
 		fd: libseccomp.ScmpFd(fd),
+		socketOptions: socketOptions{
+			options: map[string][]socketOption{},
+		},
 	}
 	notifHandler.ignoredSubnets = make([]net.IPNet, len(h.ignoredSubnets))
 	// Deep copy []net.IPNet because each thread accesses it.
