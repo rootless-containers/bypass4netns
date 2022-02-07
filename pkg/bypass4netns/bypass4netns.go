@@ -244,43 +244,37 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 	sockStatus, ok := h.socketInfo.status[key]
 	var sockfd int
 	var sockfd2 int
+	logPrefix := fmt.Sprintf("connect(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
 	if !ok {
 		if destIsIgnored {
 			// the socket has never been bypassed and no need to bypass
-			logrus.Infof("%s is ignored, skipping.", ipAddr.String())
-			logrus.Debug("the socket has never been bypassed and no need to bypass")
+			logrus.Infof("%s: %s is ignored, skipping.", logPrefix, ipAddr.String())
 			return
 		} else {
 			// the socket has never been bypassed and need to bypass
-			logrus.Debug("the socket has never been bypassed and need to bypass")
 			sockfd2, sockfd, err = duplicateSocketOnHost(ctx)
 			if err != nil {
 				logrus.Errorf("duplicating socket failed: %s", err)
 				return
 			}
 
-			err = h.socketInfo.configureSocket(ctx, sockfd2)
-			if err != nil {
-				syscall.Close(sockfd2)
-				logrus.Errorf("setsocketoptions failed: %s", err)
-				return
-			}
-
-			h.socketInfo.status[key] = socketStatus{
+			sockStatus := socketStatus{
 				state:     Bypassed,
 				fdInNetns: sockfd,
 				fdInHost:  sockfd2,
 			}
+			h.socketInfo.status[key] = sockStatus
+			logrus.Debugf("%s: start to bypass fdInHost=%d fdInNetns=%d", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
 		}
 	} else {
 		if sockStatus.state == Bypassed {
 			if !destIsIgnored {
 				// the socket has been bypassed and continue to be bypassed
-				logrus.Debug("the socket has been bypassed and continue to be bypassed")
+				logrus.Debugf("%s: continue to bypass", logPrefix)
 				return
 			} else {
 				// the socket has been bypassed and need to switch back to socket in netns
-				logrus.Debugf("the socket has been bypassed and need to switch back to socket in netns(%d -> %d)", sockStatus.fdInHost, sockStatus.fdInNetns)
+				logrus.Debugf("%s: switchback fdInHost(%d) -> fdInNetns(%d)", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
 				sockStatus.state = SwitchBacked
 				sockfd2 = sockStatus.fdInNetns
 
@@ -289,11 +283,11 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 		} else if sockStatus.state == SwitchBacked {
 			if destIsIgnored {
 				// the socket has been switchbacked(not bypassed) and no need to be bypassed
-				logrus.Debug("the socket has been switchbacked(not bypassed) and no need to be bypassed")
+				logrus.Debugf("%s: continue not bypassing", logPrefix)
 				return
 			} else {
 				// the socket has been switchbacked(not bypassed) and need to bypass again
-				logrus.Debugf("the socket has been switchbacked(not bypassed) and need bypass again(%d -> %d)", sockStatus.fdInNetns, sockStatus.fdInHost)
+				logrus.Debugf("%s: bypass again fdInNetns(%d) -> fdInHost(%d)", logPrefix, sockStatus.fdInNetns, sockStatus.fdInHost)
 				sockStatus.state = Bypassed
 				sockfd2 = sockStatus.fdInHost
 
@@ -302,6 +296,14 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 		} else {
 			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
 		}
+	}
+
+	// configure socket if switched
+	err = h.socketInfo.configureSocket(ctx, sockfd2)
+	if err != nil {
+		syscall.Close(sockfd2)
+		logrus.Errorf("setsocketoptions failed: %s", err)
+		return
 	}
 
 	addfd := seccompNotifAddFd{
