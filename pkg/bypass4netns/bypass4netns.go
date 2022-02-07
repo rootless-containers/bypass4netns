@@ -162,8 +162,8 @@ func getFdInProcess(pid, targetFd int) (int, error) {
 
 // duplicateSocketOnHost duplicate socket in other process to socket on host.
 // retun values are (duplicated socket fd, target socket fd in current process, error)
-func duplicateSocketOnHost(ctx *context) (int, int, error) {
-	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+func duplicateSocketOnHost(pid int, sockfd int) (int, int, error) {
+	sockfd, err := getFdInProcess(pid, sockfd)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -226,6 +226,67 @@ func readAddrInet4FromProcess(pid uint32, offset uint64, addrlen uint64) (*sysca
 	return &addrInet, nil
 }
 
+// manageSocket manages socketStatus and return next injecting file descriptor
+// return values are (continue?, injecting fd)
+func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, sockfd int) (bool, int) {
+	destIsIgnored := h.isIgnored(destAddr)
+	key := fmt.Sprintf("%d:%d", pid, sockfd)
+	sockStatus, ok := h.socketInfo.status[key]
+	if !ok {
+		if destIsIgnored {
+			// the socket has never been bypassed and no need to bypass
+			logrus.Infof("%s: %s is ignored, skipping.", logPrefix, destAddr.String())
+			return false, 0
+		} else {
+			// the socket has never been bypassed and need to bypass
+			sockfd2, sockfd, err := duplicateSocketOnHost(pid, sockfd)
+			if err != nil {
+				logrus.Errorf("duplicating socket failed: %s", err)
+				return false, 0
+			}
+
+			sockStatus := socketStatus{
+				state:     Bypassed,
+				fdInNetns: sockfd,
+				fdInHost:  sockfd2,
+			}
+			h.socketInfo.status[key] = sockStatus
+			logrus.Debugf("%s: start to bypass fdInHost=%d fdInNetns=%d", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
+			return true, sockfd2
+		}
+	} else {
+		if sockStatus.state == Bypassed {
+			if !destIsIgnored {
+				// the socket has been bypassed and continue to be bypassed
+				logrus.Debugf("%s: continue to bypass", logPrefix)
+				return false, 0
+			} else {
+				// the socket has been bypassed and need to switch back to socket in netns
+				logrus.Debugf("%s: switchback fdInHost(%d) -> fdInNetns(%d)", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
+				sockStatus.state = SwitchBacked
+
+				h.socketInfo.status[key] = sockStatus
+				return true, sockStatus.fdInNetns
+			}
+		} else if sockStatus.state == SwitchBacked {
+			if destIsIgnored {
+				// the socket has been switchbacked(not bypassed) and no need to be bypassed
+				logrus.Debugf("%s: continue not bypassing", logPrefix)
+				return false, 0
+			} else {
+				// the socket has been switchbacked(not bypassed) and need to bypass again
+				logrus.Debugf("%s: bypass again fdInNetns(%d) -> fdInHost(%d)", logPrefix, sockStatus.fdInNetns, sockStatus.fdInHost)
+				sockStatus.state = Bypassed
+
+				h.socketInfo.status[key] = sockStatus
+				return true, sockStatus.fdInHost
+			}
+		} else {
+			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
+		}
+	}
+}
+
 // handleSysConnect handles syscall connect(2).
 // If destination is outside of container network,
 // it creates and configures a socket on host.
@@ -243,64 +304,13 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 
 	// TODO: more sophisticated way to convert.
 	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	destIsIgnored := h.isIgnored(ipAddr)
-
-	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	sockStatus, ok := h.socketInfo.status[key]
-	var sockfd int
-	var sockfd2 int
 	logPrefix := fmt.Sprintf("connect(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
-	if !ok {
-		if destIsIgnored {
-			// the socket has never been bypassed and no need to bypass
-			logrus.Infof("%s: %s is ignored, skipping.", logPrefix, ipAddr.String())
-			return
-		} else {
-			// the socket has never been bypassed and need to bypass
-			sockfd2, sockfd, err = duplicateSocketOnHost(ctx)
-			if err != nil {
-				logrus.Errorf("duplicating socket failed: %s", err)
-				return
-			}
 
-			sockStatus := socketStatus{
-				state:     Bypassed,
-				fdInNetns: sockfd,
-				fdInHost:  sockfd2,
-			}
-			h.socketInfo.status[key] = sockStatus
-			logrus.Debugf("%s: start to bypass fdInHost=%d fdInNetns=%d", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
-		}
-	} else {
-		if sockStatus.state == Bypassed {
-			if !destIsIgnored {
-				// the socket has been bypassed and continue to be bypassed
-				logrus.Debugf("%s: continue to bypass", logPrefix)
-				return
-			} else {
-				// the socket has been bypassed and need to switch back to socket in netns
-				logrus.Debugf("%s: switchback fdInHost(%d) -> fdInNetns(%d)", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
-				sockStatus.state = SwitchBacked
-				sockfd2 = sockStatus.fdInNetns
+	// Retrieve next injecting file descriptor
+	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 
-				h.socketInfo.status[key] = sockStatus
-			}
-		} else if sockStatus.state == SwitchBacked {
-			if destIsIgnored {
-				// the socket has been switchbacked(not bypassed) and no need to be bypassed
-				logrus.Debugf("%s: continue not bypassing", logPrefix)
-				return
-			} else {
-				// the socket has been switchbacked(not bypassed) and need to bypass again
-				logrus.Debugf("%s: bypass again fdInNetns(%d) -> fdInHost(%d)", logPrefix, sockStatus.fdInNetns, sockStatus.fdInHost)
-				sockStatus.state = Bypassed
-				sockfd2 = sockStatus.fdInHost
-
-				h.socketInfo.status[key] = sockStatus
-			}
-		} else {
-			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
-		}
+	if !cont {
+		return
 	}
 
 	// configure socket if switched
@@ -347,7 +357,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 		return
 	}
 
-	sockfd2, sockfd, err := duplicateSocketOnHost(ctx)
+	sockfd2, sockfd, err := duplicateSocketOnHost(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
