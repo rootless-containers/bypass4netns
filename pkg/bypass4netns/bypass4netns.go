@@ -160,36 +160,48 @@ func getFdInProcess(pid, targetFd int) (int, error) {
 	return fd, nil
 }
 
-// duplicateSocketOnHost duplicate socket in other process to socket on host.
-// retun values are (duplicated socket fd, target socket fd in current process, error)
-func duplicateSocketOnHost(pid int, sockfd int) (int, int, error) {
-	sockfd, err := getFdInProcess(pid, sockfd)
-	if err != nil {
-		return 0, 0, err
-	}
-
+// getSocketArgs retrieves socket(2) arguemnts from fd.
+// return values are (sock_domain, sock_type, sock_protocol, error)
+func getSocketArgs(sockfd int) (int, int, int, error) {
 	logrus.Debugf("got sockfd=%v", sockfd)
 	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
 	if err != nil {
-		return 0, 0, fmt.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
+		return 0, 0, 0, fmt.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
+	}
+
+	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
+	}
+
+	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
+	}
+
+	return sock_domain, sock_type, sock_protocol, nil
+}
+
+// duplicateSocketOnHost duplicate socket in other process to socket on host.
+// retun values are (duplicated socket fd, target socket fd in current process, error)
+func duplicateSocketOnHost(pid int, _sockfd int) (int, int, error) {
+	sockfd, err := getFdInProcess(pid, _sockfd)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get fd %s", err)
+	}
+
+	sock_domain, sock_type, sock_protocol, err := getSocketArgs(sockfd)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get socket args %s", err)
 	}
 
 	if sock_domain != syscall.AF_INET {
 		return 0, 0, fmt.Errorf("expected AF_INET, got %d", sock_domain)
 	}
 
-	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
-	if err != nil {
-		return 0, 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
-	}
-
+	// only SOCK_STREAM and SOCK_DGRAM are acceptable.
 	if sock_type != syscall.SOCK_STREAM && sock_type != syscall.SOCK_DGRAM {
 		return 0, 0, fmt.Errorf("SOCK_STREAM and SOCK_DGRAM are supported")
-	}
-
-	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
-	if err != nil {
-		return 0, 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
 	}
 
 	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
