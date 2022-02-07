@@ -200,35 +200,40 @@ func duplicateSocketOnHost(ctx *context) (int, int, error) {
 	return sockfd2, sockfd, nil
 }
 
-// handleSysConnect handles syscall connect(2).
-// If destination is outside of container network,
-// it creates and configures a socket on host.
-// Then, handler replaces container's socket to created one.
-func (h *notifHandler) handleSysConnect(ctx *context) {
-	addrlen := ctx.req.Data.Args[2]
-	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
+func readAddrInet4FromProcess(pid uint32, offset uint64, addrlen uint64) (*syscall.RawSockaddrInet4, error) {
+	buf, err := readProcMem(pid, offset, addrlen)
 	if err != nil {
-		logrus.Errorf("Error readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
-		return
+		return nil, fmt.Errorf("failed readProcMem pid %v offset 0x%x: %s", pid, offset, err)
 	}
 
 	addr := syscall.RawSockaddr{}
 	reader := bytes.NewReader(buf)
 	err = binary.Read(reader, binary.LittleEndian, &addr)
 	if err != nil {
-		logrus.Errorf("Error casting byte array to RawSocksddr: %s", err)
-		return
+		return nil, fmt.Errorf("cannot cast byte array to RawSocksddr: %s", err)
 	}
 
 	if addr.Family != syscall.AF_INET {
-		logrus.Debugf("Not AF_INET addr: %d", addr.Family)
-		return
+		return nil, fmt.Errorf("not AF_INET addr: %d", addr.Family)
 	}
 	addrInet := syscall.RawSockaddrInet4{}
 	reader.Seek(0, 0)
 	err = binary.Read(reader, binary.LittleEndian, &addrInet)
 	if err != nil {
-		logrus.Errorf("Error casting byte array to RawSockaddrInet4: %s", err)
+		return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet4: %s", err)
+	}
+
+	return &addrInet, nil
+}
+
+// handleSysConnect handles syscall connect(2).
+// If destination is outside of container network,
+// it creates and configures a socket on host.
+// Then, handler replaces container's socket to created one.
+func (h *notifHandler) handleSysConnect(ctx *context) {
+	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	if err != nil {
+		logrus.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
@@ -326,30 +331,9 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 // it creates and configures including bind(2) a socket on host.
 // Then, handler replaces container's socket to created one.
 func (h *notifHandler) handleSysBind(ctx *context) {
-	addrlen := ctx.req.Data.Args[2]
-	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], addrlen)
+	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
-		logrus.Errorf("Error readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
-		return
-	}
-
-	addr := syscall.RawSockaddr{}
-	reader := bytes.NewReader(buf)
-	err = binary.Read(reader, binary.LittleEndian, &addr)
-	if err != nil {
-		logrus.Errorf("Error casting byte array to RawSocksddr: %s", err)
-		return
-	}
-
-	if addr.Family != syscall.AF_INET {
-		logrus.Debugf("Not AF_INET addr: %d", addr.Family)
-		return
-	}
-	addrInet := syscall.RawSockaddrInet4{}
-	reader.Seek(0, 0)
-	err = binary.Read(reader, binary.LittleEndian, &addrInet)
-	if err != nil {
-		logrus.Errorf("Error casting byte array to RawSockaddrInet4: %s", err)
+		logrus.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
