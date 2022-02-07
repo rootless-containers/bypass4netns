@@ -419,6 +419,82 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 	}
 }
 
+// handleSysSendto handles syscall sendto(2).
+// If destination is outside of container network,
+// it creates and configures a socket on host.
+// Then, handler replaces container's socket to created one.
+// This handles only SOCK_DGRAM sockets.
+func (h *notifHandler) handleSysSendto(ctx *context) {
+	// addrlen == 0 is send(2)
+	if ctx.req.Data.Args[5] == 0 {
+		return
+	}
+
+	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+	if err != nil {
+		logrus.Errorf("failed to get fd: %s", err)
+	}
+	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
+
+	if err != nil {
+		logrus.Error("failed to get socket args: %s", err)
+		return
+	}
+
+	if sock_domain != syscall.AF_INET {
+		logrus.Debug("only supported AF_INET: %d")
+		return
+	}
+
+	if sock_type != syscall.SOCK_DGRAM {
+		logrus.Debug("only SOCK_DGRAM sockets are handled")
+		return
+	}
+
+	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[4], ctx.req.Data.Args[5])
+	if err != nil {
+		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		return
+	}
+
+	logrus.Debugf("%v", addrInet)
+	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
+	logrus.Infof("sendto(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+
+	// TODO: more sophisticated way to convert.
+	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	logPrefix := fmt.Sprintf("sendto(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
+
+	// Retrieve next injecting file descriptor
+	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+
+	if !cont {
+		return
+	}
+
+	// configure socket if switched
+	err = h.socketInfo.configureSocket(ctx, sockfd2)
+	if err != nil {
+		syscall.Close(sockfd2)
+		logrus.Errorf("setsocketoptions failed: %s", err)
+		return
+	}
+
+	addfd := seccompNotifAddFd{
+		id:         ctx.req.ID,
+		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		srcfd:      uint32(sockfd2),
+		newfd:      uint32(ctx.req.Data.Args[0]),
+		newfdFlags: 0,
+	}
+
+	err = addfd.ioctlNotifAddFd(ctx.notifFd)
+	if err != nil {
+		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		return
+	}
+}
+
 // handleSyssetsockopt handles `setsockopt(2)` and records options.
 // Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
 func (h *notifHandler) handleSysSetsockopt(ctx *context) {
@@ -449,6 +525,8 @@ func (h *notifHandler) handleReq(ctx *context) {
 		h.handleSysClose(ctx)
 	case "connect":
 		h.handleSysConnect(ctx)
+	case "sendto":
+		h.handleSysSendto(ctx)
 	case "setsockopt":
 		h.handleSysSetsockopt(ctx)
 	default:

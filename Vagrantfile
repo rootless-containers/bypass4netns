@@ -47,7 +47,7 @@ Vagrant.configure("2") do |config|
     echo "===== `--ignore` option test ====="
     (
      set -x
-     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,192.168.6.0/24"
+     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8,192.168.6.0/24"
      nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test "${ALPINE_IMAGE}" sleep infinity
      nerdctl exec test apk add --no-cache iperf3
      nerdctl exec test iperf3 -c $(cat /tmp/host_ip)
