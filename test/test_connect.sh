@@ -16,14 +16,14 @@ NETNS_IP=`nerdctl exec connect_test2 hostname -i`
 echo $NETNS_IP
 
 # test tcp
-python3 test_connect.py -s -p 8888  &> /dev/null &
-nerdctl exec connect_test2 python3 /tmp/test_connect.py -s -p 8888 &> /dev/null &
-nerdctl exec connect_test1 python3 /tmp/test_connect.py -c -p 8888 --host-ip $HOST_IP --netns-ip $NETNS_IP
+python3 test_connect.py -s -p 8888 --count 2 &> /dev/null &
+nerdctl exec connect_test2 python3 /tmp/test_connect.py -s -p 8888 --count 2 &> /dev/null &
+nerdctl exec connect_test1 python3 /tmp/test_connect.py -c -p 8888 --host-ip $HOST_IP --netns-ip $NETNS_IP --count 2
 
 # test udp
-python3 test_connect.py -s -p 8888 -u &> /tmp/test_connect_host &
-nerdctl exec connect_test2 python3 /tmp/test_connect.py -s -p 8888 -u &> /tmp/test_connect_test2 &
-nerdctl exec connect_test1 python3 /tmp/test_connect.py -c -p 8888 --host-ip $HOST_IP --netns-ip $NETNS_IP -u
+python3 test_connect.py -s -p 8888 -u --count 2 &> /tmp/test_connect_host &
+nerdctl exec connect_test2 python3 /tmp/test_connect.py -s -p 8888 -u --count 2 &> /tmp/test_connect_test2 &
+nerdctl exec connect_test1 python3 /tmp/test_connect.py -c -p 8888 --host-ip $HOST_IP --netns-ip $NETNS_IP -u --count 2
 sleep 5
 
 nerdctl rm -f connect_test1
