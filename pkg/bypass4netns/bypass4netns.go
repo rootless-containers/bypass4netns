@@ -161,49 +161,43 @@ func getFdInProcess(pid, targetFd int) (int, error) {
 }
 
 // duplicateSocketOnHost duplicate socket in other process to socket on host.
-func duplicateSocketOnHost(ctx *context, info *socketInfo) (int, error) {
+// retun values are (duplicated socket fd, target socket fd in current process, error)
+func duplicateSocketOnHost(ctx *context) (int, int, error) {
 	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	defer syscall.Close(sockfd)
 
 	logrus.Debugf("got sockfd=%v", sockfd)
 	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
 	if err != nil {
-		return 0, fmt.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
+		return 0, 0, fmt.Errorf("getsockopt(SO_DOMAIN) failed: %s", err)
 	}
 
 	if sock_domain != syscall.AF_INET {
-		return 0, fmt.Errorf("expected AF_INET, got %d", sock_domain)
+		return 0, 0, fmt.Errorf("expected AF_INET, got %d", sock_domain)
 	}
 
 	sock_type, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_TYPE)
 	if err != nil {
-		return 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
+		return 0, 0, fmt.Errorf("getsockopt(SO_TYPE) failed: %s", err)
 	}
 
 	if sock_type != syscall.SOCK_STREAM {
-		return 0, fmt.Errorf("only SOCK_STREAM is supported")
+		return 0, 0, fmt.Errorf("only SOCK_STREAM is supported")
 	}
 
 	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
 	if err != nil {
-		return 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
+		return 0, 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
 	}
 
 	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
 	if err != nil {
-		return 0, fmt.Errorf("socket failed: %s", err)
+		return 0, 0, fmt.Errorf("socket failed: %s", err)
 	}
 
-	err = info.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		return 0, fmt.Errorf("setsocketoptions failed: %s", err)
-	}
-
-	return sockfd2, nil
+	return sockfd2, sockfd, nil
 }
 
 // handleSysConnect handles syscall connect(2).
@@ -244,17 +238,71 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 
 	// TODO: more sophisticated way to convert.
 	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	if h.isIgnored(ipAddr) {
-		logrus.Infof("%s is ignored, skipping.", ipAddr.String())
-		return
-	}
+	destIsIgnored := h.isIgnored(ipAddr)
 
-	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketInfo)
-	if err != nil {
-		logrus.Errorf("duplicating socket failed: %s", err)
-		return
+	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
+	sockStatus, ok := h.socketInfo.status[key]
+	var sockfd int
+	var sockfd2 int
+	if !ok {
+		if destIsIgnored {
+			// the socket has never been bypassed and no need to bypass
+			logrus.Infof("%s is ignored, skipping.", ipAddr.String())
+			logrus.Debug("the socket has never been bypassed and no need to bypass")
+			return
+		} else {
+			// the socket has never been bypassed and need to bypass
+			logrus.Debug("the socket has never been bypassed and need to bypass")
+			sockfd2, sockfd, err = duplicateSocketOnHost(ctx)
+			if err != nil {
+				logrus.Errorf("duplicating socket failed: %s", err)
+				return
+			}
+
+			err = h.socketInfo.configureSocket(ctx, sockfd2)
+			if err != nil {
+				syscall.Close(sockfd2)
+				logrus.Errorf("setsocketoptions failed: %s", err)
+				return
+			}
+
+			h.socketInfo.status[key] = socketStatus{
+				state:     Bypassed,
+				fdInNetns: sockfd,
+				fdInHost:  sockfd2,
+			}
+		}
+	} else {
+		if sockStatus.state == Bypassed {
+			if !destIsIgnored {
+				// the socket has been bypassed and continue to be bypassed
+				logrus.Debug("the socket has been bypassed and continue to be bypassed")
+				return
+			} else {
+				// the socket has been bypassed and need to switch back to socket in netns
+				logrus.Debugf("the socket has been bypassed and need to switch back to socket in netns(%d -> %d)", sockStatus.fdInHost, sockStatus.fdInNetns)
+				sockStatus.state = SwitchBacked
+				sockfd2 = sockStatus.fdInNetns
+
+				h.socketInfo.status[key] = sockStatus
+			}
+		} else if sockStatus.state == SwitchBacked {
+			if destIsIgnored {
+				// the socket has been switchbacked(not bypassed) and no need to be bypassed
+				logrus.Debug("the socket has been switchbacked(not bypassed) and no need to be bypassed")
+				return
+			} else {
+				// the socket has been switchbacked(not bypassed) and need to bypass again
+				logrus.Debugf("the socket has been switchbacked(not bypassed) and need bypass again(%d -> %d)", sockStatus.fdInNetns, sockStatus.fdInHost)
+				sockStatus.state = Bypassed
+				sockfd2 = sockStatus.fdInHost
+
+				h.socketInfo.status[key] = sockStatus
+			}
+		} else {
+			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
+		}
 	}
-	defer syscall.Close(sockfd2)
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
@@ -313,12 +361,20 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 		return
 	}
 
-	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketInfo)
+	sockfd2, sockfd, err := duplicateSocketOnHost(ctx)
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
 	}
+	defer syscall.Close(sockfd)
 	defer syscall.Close(sockfd2)
+
+	err = h.socketInfo.configureSocket(ctx, sockfd2)
+	if err != nil {
+		syscall.Close(sockfd2)
+		logrus.Errorf("setsocketoptions failed: %s", err)
+		return
+	}
 
 	bind_addr := syscall.SockaddrInet4{
 		Port: int(8080),

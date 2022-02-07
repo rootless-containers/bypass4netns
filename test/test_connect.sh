@@ -33,6 +33,8 @@ nerdctl rm -f connect_test2
 cat /tmp/test_connect_host /tmp/test_connect_test2 | grep 'timeout'
 if [ $? -eq 0 ]; then
     echo "test connect over udp failed"
+    cat /tmp/test_connect_host
+    cat /tmp/test_connect_test2
     exit 1
 fi
 
