@@ -161,7 +161,7 @@ func getFdInProcess(pid, targetFd int) (int, error) {
 }
 
 // duplicateSocketOnHost duplicate socket in other process to socket on host.
-func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
+func duplicateSocketOnHost(ctx *context, info *socketInfo) (int, error) {
 	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
 		return 0, err
@@ -197,7 +197,7 @@ func duplicateSocketOnHost(ctx *context, opts *socketOptions) (int, error) {
 		return 0, fmt.Errorf("socket failed: %s", err)
 	}
 
-	err = opts.configureSocket(ctx, sockfd2)
+	err = info.configureSocket(ctx, sockfd2)
 	if err != nil {
 		syscall.Close(sockfd2)
 		return 0, fmt.Errorf("setsocketoptions failed: %s", err)
@@ -249,7 +249,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 		return
 	}
 
-	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketOptions)
+	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketInfo)
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
@@ -313,7 +313,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 		return
 	}
 
-	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketOptions)
+	sockfd2, err := duplicateSocketOnHost(ctx, &h.socketInfo)
 	if err != nil {
 		logrus.Errorf("duplicating socket failed: %s", err)
 		return
@@ -352,7 +352,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 // Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
 func (h *notifHandler) handleSysSetsockopt(ctx *context) {
 	logrus.Debugf("setsockopt(pid=%d): sockfd=%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	err := h.socketOptions.recordSocketOption(ctx)
+	err := h.socketInfo.recordSocketOption(ctx)
 	if err != nil {
 		logrus.Errorf("recordSocketOption failed: %s", err)
 	}
@@ -362,7 +362,7 @@ func (h *notifHandler) handleSysSetsockopt(ctx *context) {
 func (h *notifHandler) handleSysClose(ctx *context) {
 	sockfd := ctx.req.Data.Args[0]
 	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
-	h.socketOptions.deleteSocketOptions(ctx)
+	h.socketInfo.deleteSocket(ctx)
 }
 
 // handleReq handles seccomp notif requests and configures responses.
@@ -455,14 +455,15 @@ func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet) {
 type notifHandler struct {
 	fd             libseccomp.ScmpFd
 	ignoredSubnets []net.IPNet
-	socketOptions  socketOptions
+	socketInfo     socketInfo
 }
 
 func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
 	notifHandler := notifHandler{
 		fd: libseccomp.ScmpFd(fd),
-		socketOptions: socketOptions{
+		socketInfo: socketInfo{
 			options: map[string][]socketOption{},
+			status:  map[string]socketStatus{},
 		},
 	}
 	notifHandler.ignoredSubnets = make([]net.IPNet, len(h.ignoredSubnets))

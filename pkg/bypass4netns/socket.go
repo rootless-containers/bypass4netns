@@ -15,14 +15,33 @@ type socketOption struct {
 	optlen  uint64
 }
 
-type socketOptions struct {
+type socketState int
+
+const (
+	// Bypassed means that the socket is replaced by one created on the host
+	Bypassed socketState = iota
+
+	// SwitchBacked means that the socket was bypassed but now rereplaced to the socket in netns.
+	// This state can be hannpend in connect(2), sendto(2) and sendmsg(2)
+	// when connecting to a host outside of netns and then connecting to a host inside of netns with same fd.
+	SwitchBacked
+)
+
+type socketStatus struct {
+	state     socketState
+	fdInNetns int
+	fdInHost  int
+}
+
+type socketInfo struct {
 	options map[string][]socketOption
+	status  map[string]socketStatus
 }
 
 // configureSocket set recorded socket options.
-func (opts *socketOptions) configureSocket(ctx *context, sockfd int) error {
+func (info *socketInfo) configureSocket(ctx *context, sockfd int) error {
 	key := fmt.Sprintf("%d:%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	optValues, ok := opts.options[key]
+	optValues, ok := info.options[key]
 	if !ok {
 		return nil
 	}
@@ -38,7 +57,7 @@ func (opts *socketOptions) configureSocket(ctx *context, sockfd int) error {
 }
 
 // recordSocketOption records socket option.
-func (opts *socketOptions) recordSocketOption(ctx *context) error {
+func (info *socketInfo) recordSocketOption(ctx *context) error {
 	sockfd := ctx.req.Data.Args[0]
 	level := ctx.req.Data.Args[1]
 	optname := ctx.req.Data.Args[2]
@@ -49,9 +68,9 @@ func (opts *socketOptions) recordSocketOption(ctx *context) error {
 	}
 
 	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := opts.options[key]
+	_, ok := info.options[key]
 	if !ok {
-		opts.options[key] = make([]socketOption, 0)
+		info.options[key] = make([]socketOption, 0)
 	}
 
 	value := socketOption{
@@ -60,19 +79,27 @@ func (opts *socketOptions) recordSocketOption(ctx *context) error {
 		optval:  optval,
 		optlen:  optlen,
 	}
-	opts.options[key] = append(opts.options[key], value)
+	info.options[key] = append(info.options[key], value)
 
 	logrus.Debugf("recorded socket option sockfd=%d level=%d optname=%d optval=%v optlen=%d", sockfd, level, optname, optval, optlen)
 	return nil
 }
 
-// deleteSocketOptions delete recorded socket options
-func (opts *socketOptions) deleteSocketOptions(ctx *context) {
+// deleteSocketOptions delete recorded socket options and status
+func (info *socketInfo) deleteSocket(ctx *context) {
 	sockfd := ctx.req.Data.Args[0]
 	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
-	_, ok := opts.options[key]
+	_, ok := info.options[key]
 	if ok {
-		delete(opts.options, key)
+		delete(info.options, key)
 		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
+	}
+
+	status, ok := info.status[key]
+	if ok {
+		delete(info.status, key)
+		syscall.Close(status.fdInHost)
+		syscall.Close(status.fdInHost)
+		logrus.Debugf("removed socket status(fdInNetns=%d fdInHost=%d)", status.fdInNetns, status.fdInHost)
 	}
 }
