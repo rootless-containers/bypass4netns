@@ -25,7 +25,7 @@ Vagrant.configure("2") do |config|
     (
      set -x
      sudo apt-get update
-     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap golang
+     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap golang python3
      systemctl --user start dbus
 
      cd /vagrant
@@ -35,12 +35,20 @@ Vagrant.configure("2") do |config|
 
      curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
      containerd-rootless-setuptool.sh install
+     containerd-rootless-setuptool.sh install-buildkit
      nerdctl info
      nerdctl pull --quiet "${ALPINE_IMAGE}"
 
      hostname -I | awk '{print $1}' | tee /tmp/host_ip
      /vagrant/test/seccomp.json.sh | tee /tmp/seccomp.json
 
+    )
+
+    echo "===== connect(2) test ====="
+    (
+     set -x
+     cd /vagrant/test
+     /bin/bash test_connect.sh /tmp/seccomp.json $(cat /tmp/host_ip)
     )
 
     echo "===== Benchmark: netns -> host With bypass4netns ====="
