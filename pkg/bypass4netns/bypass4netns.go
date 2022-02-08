@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -299,6 +302,56 @@ func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, 
 			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
 		}
 	}
+}
+
+// getInet4AddressesFromPid get interface ipaddress of the netns the pid belonging.
+// loopback address(127.0.0.0/8) is ignored.
+func getInet4AddressesFromPid(pid int) ([]net.IP, error) {
+	res, err := exec.Command("nsenter", "--target", strconv.Itoa(pid), "--user", "--net", "ip", "-o", "addr").Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to exec `nsenter ip a s` in pid=%d", pid)
+	}
+
+	_, loSubnets, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate LoopBack subnet")
+	}
+
+	ips := []net.IP{}
+	lines := strings.Split(string(res), "\n")
+	for _, line := range lines {
+		// Ignore interfaces not having ipv4 address
+		if !strings.Contains(line, "inet") {
+			continue
+		}
+
+		// Ignore ipv6 address
+		if strings.Contains(line, "inet6") {
+			continue
+		}
+
+		// try to parse address from below like outputs
+		// "1: lo    inet 127.0.0.1/8 scope host lo\       valid_lft forever preferred_lft forever"
+		elements := strings.Fields(line)
+		for idx, e := range elements {
+			if e != "inet" {
+				continue
+			}
+			if idx+1 >= len(elements) {
+				break
+			}
+			ipAddrStr := elements[idx+1]
+			ipAddr, _, err := net.ParseCIDR(ipAddrStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse %s: %s", ipAddrStr, err)
+			}
+			if loSubnets.Contains(ipAddr) {
+				break
+			}
+			ips = append(ips, ipAddr)
+		}
+	}
+	return ips, nil
 }
 
 // handleSysBind handles syscall bind(2).
