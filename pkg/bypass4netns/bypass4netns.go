@@ -368,7 +368,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 // handleSysClose handles `close(2)` and delete recorded socket options.
 func (h *notifHandler) handleSysClose(ctx *context) {
 	sockfd := ctx.req.Data.Args[0]
-	logrus.Debugf("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
+	logrus.Tracef("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
 	h.socketInfo.deleteSocket(ctx)
 }
 
@@ -609,7 +609,7 @@ func (h *notifHandler) handleReq(ctx *context) {
 		// TODO: error handle
 		return
 	}
-	logrus.Debugf("Received syscall %q, pid %v, arch %q, args %+v", syscallName, ctx.req.Pid, ctx.req.Data.Arch, ctx.req.Data.Args)
+	logrus.Tracef("Received syscall %q, pid %v, arch %q, args %+v", syscallName, ctx.req.Pid, ctx.req.Data.Arch, ctx.req.Data.Args)
 
 	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
 
