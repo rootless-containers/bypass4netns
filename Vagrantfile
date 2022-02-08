@@ -55,7 +55,9 @@ Vagrant.configure("2") do |config|
      journalctl --user -u run-bypass4netns.service | grep "is ignored, skipping."
      nerdctl rm -f test
      systemctl --user stop run-bypass4netns.service
-     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8"
+
+     # '-p 8080:5201' is for iperf3
+     systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8" -p 8080:5201
     )
 
     echo "===== connect(2),sendto(2) test ====="

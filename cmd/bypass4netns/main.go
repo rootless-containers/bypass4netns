@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/sirupsen/logrus"
@@ -26,6 +28,7 @@ func main() {
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netns.sock"), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
+	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Parse arguments
@@ -46,6 +49,8 @@ func main() {
 		}
 	}
 
+	handler := bypass4netns.NewHandler(socketFile)
+
 	subnets := []net.IPNet{}
 	for _, subnetStr := range *ignoredSubnets {
 		_, subnet, err := net.ParseCIDR(subnetStr)
@@ -55,8 +60,31 @@ func main() {
 		subnets = append(subnets, *subnet)
 		logrus.Debugf("%s is added to ignore", subnet)
 	}
-
-	handler := bypass4netns.NewHandler(socketFile)
 	handler.SetIgnoredSubnets(subnets)
+
+	for _, forwardPortStr := range *fowardPorts {
+		ports := strings.Split(forwardPortStr, ":")
+		if len(ports) != 2 {
+			logrus.Fatalf("invalid publish port format: '%s'", forwardPortStr)
+		}
+		hostPort, err := strconv.Atoi(ports[0])
+		if err != nil {
+			logrus.Fatalf("not interger %s in '%s'", ports[0], forwardPortStr)
+		}
+		childPort, err := strconv.Atoi(ports[1])
+		if err != nil {
+			logrus.Fatalf("not interger %s in '%s'", ports[1], forwardPortStr)
+		}
+		portMap := bypass4netns.ForwardPortMapping{
+			HostPort:  hostPort,
+			ChildPort: childPort,
+		}
+		err = handler.SetForwardingPort(portMap)
+		if err != nil {
+			logrus.Fatalf("failed to set fowardind port '%s' : %s", forwardPortStr, err)
+		}
+		logrus.Debugf("fowarding port %s (host=%d container=%d) is added", forwardPortStr, hostPort, childPort)
+	}
+
 	handler.StartHandle()
 }

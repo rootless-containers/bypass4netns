@@ -369,8 +369,16 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
 	logrus.Infof("bind(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
 
+	ips, err := getInet4AddressesFromPid(int(ctx.req.Pid))
+	if err != nil {
+		logrus.Errorf("failed to get ip address from pid=%d: %s", ctx.req.Pid, err)
+		return
+	}
+	logrus.Debugf("target address %v", ips)
+
 	// TODO: get port-fowrad mapping from nerdctl
-	if port != 5201 {
+	fwdPort, ok := h.forwardingPorts[int(port)]
+	if !ok {
 		logrus.Infof("not mapped port=%d", port)
 		return
 	}
@@ -391,7 +399,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 	}
 
 	bind_addr := syscall.SockaddrInet4{
-		Port: int(8080),
+		Port: fwdPort.HostPort,
 		Addr: addrInet.Addr,
 	}
 
@@ -725,16 +733,25 @@ func (h *notifHandler) handle() {
 	}
 }
 
+type ForwardPortMapping struct {
+	HostPort  int
+	ChildPort int
+}
+
 type Handler struct {
 	socketPath     string
 	ignoredSubnets []net.IPNet
+
+	// key is child port
+	forwardingPorts map[int]ForwardPortMapping
 }
 
 // NewHandler creates new seccomp notif handler
 func NewHandler(socketPath string) *Handler {
 	handler := Handler{
-		socketPath:     socketPath,
-		ignoredSubnets: []net.IPNet{},
+		socketPath:      socketPath,
+		ignoredSubnets:  []net.IPNet{},
+		forwardingPorts: map[int]ForwardPortMapping{},
 	}
 
 	return &handler
@@ -745,15 +762,32 @@ func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet) {
 	h.ignoredSubnets = subnets
 }
 
+// SetForwardingPort checks and configures port forwarding
+func (h *Handler) SetForwardingPort(mapping ForwardPortMapping) error {
+	for _, fwd := range h.forwardingPorts {
+		if fwd.HostPort == mapping.HostPort {
+			return fmt.Errorf("host port %d is already forwarded", fwd.HostPort)
+		}
+		if fwd.ChildPort == mapping.ChildPort {
+			return fmt.Errorf("container port %d is already forwarded", fwd.ChildPort)
+		}
+	}
+
+	h.forwardingPorts[mapping.ChildPort] = mapping
+	return nil
+}
+
 type notifHandler struct {
-	fd             libseccomp.ScmpFd
-	ignoredSubnets []net.IPNet
-	socketInfo     socketInfo
+	fd              libseccomp.ScmpFd
+	ignoredSubnets  []net.IPNet
+	forwardingPorts map[int]ForwardPortMapping
+	socketInfo      socketInfo
 }
 
 func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
 	notifHandler := notifHandler{
-		fd: libseccomp.ScmpFd(fd),
+		fd:              libseccomp.ScmpFd(fd),
+		forwardingPorts: map[int]ForwardPortMapping{},
 		socketInfo: socketInfo{
 			options: map[string][]socketOption{},
 			status:  map[string]socketStatus{},
@@ -762,6 +796,12 @@ func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
 	notifHandler.ignoredSubnets = make([]net.IPNet, len(h.ignoredSubnets))
 	// Deep copy []net.IPNet because each thread accesses it.
 	copy(notifHandler.ignoredSubnets, h.ignoredSubnets)
+
+	// Deep copy of map
+	for key, value := range h.forwardingPorts {
+		notifHandler.forwardingPorts[key] = value
+	}
+
 	return &notifHandler
 }
 
