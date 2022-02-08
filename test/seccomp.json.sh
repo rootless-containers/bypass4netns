@@ -22,6 +22,7 @@ cat <<EOF
         "bind",
         "close",
         "connect",
+        "sendmsg",
         "sendto",
         "setsockopt"
       ],
