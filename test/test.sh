@@ -15,6 +15,7 @@ nerdctl run --security-opt seccomp=$SECCOMP_CONFIG_PATH -d --name $TEST_CONTAINE
 NETNS_IP=`nerdctl exec $TEST_CONTAINER_2 hostname -i`
 echo $NETNS_IP
 
+echo "test_connect starting..."
 # test_connect tcp
 python3 test_connect.py -s -p 8888 --count 2 &> /dev/null &
 nerdctl exec $TEST_CONTAINER_2 python3 /tmp/test_connect.py -s -p 8888 --count 2 &> /dev/null &
@@ -27,14 +28,16 @@ nerdctl exec $TEST_CONTAINER_1 python3 /tmp/test_connect.py -c -p 8888 --host-ip
 sleep 5
 
 # check server is not timedout
-cat /tmp/test_host /tmp/test_test2 | grep 'timeout'
-if [ $? -eq 0 ]; then
+RESULT=`cat /tmp/test_host /tmp/test_test2`
+if [[ "$RESULT" == *timeout* ]]; then
     echo "test connect over udp failed"
     cat /tmp/test_host
     cat /tmp/test_test2
     exit 1
 fi
+echo "test_connect done."
 
+echo "test_sendto starting..."
 # test_sendto tcp
 python3 test_sendto.py -s -p 8888 --count 2 &> /dev/null &
 nerdctl exec $TEST_CONTAINER_2 python3 /tmp/test_sendto.py -s -p 8888 --count 2 &> /dev/null &
@@ -47,14 +50,16 @@ nerdctl exec $TEST_CONTAINER_1 python3 /tmp/test_sendto.py -c -p 8888 --host-ip 
 sleep 5
 
 # check server is not timedout
-cat /tmp/test_host /tmp/test_test2 | grep 'timeout'
-if [ $? -eq 0 ]; then
+RESULT=`cat /tmp/test_host /tmp/test_test2`
+if [[ "$RESULT" == *timeout* ]]; then
     echo "test sendto over udp failed"
     cat /tmp/test_host
     cat /tmp/test_test2
     exit 1
 fi
+echo "test_sendto done."
 
+echo "test_sendmsg starting..."
 # test_sendmsg tcp
 python3 test_sendmsg.py -s -p 8888 --count 2 &> /dev/null &
 nerdctl exec $TEST_CONTAINER_2 python3 /tmp/test_sendmsg.py -s -p 8888 --count 2 &> /dev/null &
@@ -67,13 +72,14 @@ nerdctl exec $TEST_CONTAINER_1 python3 /tmp/test_sendmsg.py -c -p 8888 --host-ip
 sleep 5
 
 # check server is not timedout
-cat /tmp/test_host /tmp/test_test2 | grep 'timeout'
-if [ $? -eq 0 ]; then
+RESULT=`cat /tmp/test_host /tmp/test_test2`
+if [[ "$RESULT" == *timeout* ]]; then
     echo "test sendto over udp failed"
     cat /tmp/test_host
     cat /tmp/test_test2
     exit 1
 fi
+echo "test_sendmsg done."
 
 nerdctl rm -f $TEST_CONTAINER_2
 nerdctl rm -f $TEST_CONTAINER_1
