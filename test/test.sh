@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x
+set -eu -o pipefail
 
 SECCOMP_CONFIG_PATH=$1
 HOST_IP=$2
