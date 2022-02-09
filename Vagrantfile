@@ -107,5 +107,11 @@ Vagrant.configure("2") do |config|
      nerdctl rm -f test
     )
 
+    echo "===== Test bypass4netnsd ====="
+    (
+     set -x
+     /vagrant/test/test_b4nsd.sh
+    )
+
   SHELL
 end
