@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,8 +16,9 @@ import (
 )
 
 var (
-	socketFile string
-	pidFile    string
+	socketFile  string
+	pidFile     string
+	logFilePath string
 )
 
 func main() {
@@ -27,6 +29,7 @@ func main() {
 
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netns.sock"), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
+	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	logrus.SetLevel(logrus.DebugLevel)
@@ -47,6 +50,15 @@ func main() {
 		if err := os.WriteFile(pidFile, []byte(pid), 0o644); err != nil {
 			logrus.Fatalf("Cannot write pid file: %v", err)
 		}
+	}
+
+	if logFilePath != "" {
+		logFile, err := os.Create(logFilePath)
+		if err != nil {
+			logrus.Fatalf("Cannnot write log file %s : %v", logFilePath, err)
+		}
+		defer logFile.Close()
+		logrus.SetOutput(io.MultiWriter(os.Stderr, logFile))
 	}
 
 	handler := bypass4netns.NewHandler(socketFile)
