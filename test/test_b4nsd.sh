@@ -9,4 +9,5 @@ cd ../
 systemd-run --user --unit run-b4nsd bypass4netnsd
 cd cmd/bypass4netnsd/
 go test -count=1 .
-systemctl --user stop run-b4nsd
+systemctl --user stop run-b4nsd.service
+sleep 1
