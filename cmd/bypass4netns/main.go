@@ -27,7 +27,7 @@ func main() {
 		panic("$XDG_RUNTIME_DIR needs to be set")
 	}
 
-	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netns.sock"), "Socket file")
+	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, bypass4netns.SocketName), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
