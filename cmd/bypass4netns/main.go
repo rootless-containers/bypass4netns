@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
+	"github.com/rootless-containers/bypass4netns/pkg/oci"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
@@ -28,7 +29,7 @@ func main() {
 		panic("$XDG_RUNTIME_DIR needs to be set")
 	}
 
-	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, bypass4netns.SocketName), "Socket file")
+	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, oci.SocketName), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")

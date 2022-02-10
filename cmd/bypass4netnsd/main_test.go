@@ -7,8 +7,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/rootless-containers/bypass4netns/pkg/api"
 	"github.com/rootless-containers/bypass4netns/pkg/api/daemon/client"
-	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,7 +23,7 @@ func TestBypass4netnsd(t *testing.T) {
 		t.Fatalf("failed client.New %s", err)
 	}
 	bm := client.BypassManager()
-	specs := bypass4netns.BypassSpec{
+	specs := api.BypassSpec{
 		ID: "1234567890",
 	}
 	status, err := bm.StartBypass(context.TODO(), specs)

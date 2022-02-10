@@ -7,7 +7,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rootless-containers/bypass4netns/pkg/api"
-	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 )
 
 type Backend struct {
@@ -15,8 +14,8 @@ type Backend struct {
 }
 
 type BypassDriver interface {
-	ListBypass() []bypass4netns.BypassStatus
-	StartBypass(*bypass4netns.BypassSpec) (*bypass4netns.BypassStatus, error)
+	ListBypass() []api.BypassStatus
+	StartBypass(*api.BypassSpec) (*api.BypassStatus, error)
 	StopBypass(id string) error
 }
 
@@ -44,7 +43,7 @@ func (b *Backend) GetBypasses(w http.ResponseWriter, r *http.Request) {
 
 func (b *Backend) PostBypass(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
-	var bSpec bypass4netns.BypassSpec
+	var bSpec api.BypassSpec
 	if err := decoder.Decode(&bSpec); err != nil {
 		b.onError(w, r, err, http.StatusBadRequest)
 		return

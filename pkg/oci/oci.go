@@ -1,4 +1,4 @@
-package bypass4netns
+package oci
 
 import (
 	gocontext "context"
@@ -15,6 +15,21 @@ const (
 	SocketName = "bypass4netns.sock"
 )
 
+func getDefaultSeccompProfile(listenerPath string) *specs.LinuxSeccomp {
+	seccomp := &specs.LinuxSeccomp{
+		DefaultAction: specs.ActAllow,
+		Architectures: []specs.Arch{specs.ArchX86_64, specs.ArchX86, specs.ArchX32},
+		ListenerPath:  listenerPath,
+		Syscalls: []specs.LinuxSyscall{
+			{
+				Names:  []string{"bind", "close", "connect", "sendmsg", "sendto", "setsockopt"},
+				Action: specs.ActNotify,
+			},
+		},
+	}
+
+	return seccomp
+}
 func GenerateSecurityOpt(listenerPath string) (oci.SpecOpts, error) {
 	opt := func(_ gocontext.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
 		s.Linux.Seccomp = getDefaultSeccompProfile(listenerPath)
