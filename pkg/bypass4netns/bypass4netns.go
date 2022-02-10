@@ -242,20 +242,20 @@ func readAddrInet4FromProcess(pid uint32, offset uint64, addrlen uint64) (*sysca
 
 // manageSocket manages socketStatus and return next injecting file descriptor
 // return values are (continue?, injecting fd)
-func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, sockfd int) (bool, int) {
+func (h *notifHandler) manageSocket(destAddr net.IP, pid int, sockfd int, logger *logrus.Entry) (bool, int) {
 	destIsIgnored := h.isIgnored(destAddr)
 	key := fmt.Sprintf("%d:%d", pid, sockfd)
 	sockStatus, ok := h.socketInfo.status[key]
 	if !ok {
 		if destIsIgnored {
 			// the socket has never been bypassed and no need to bypass
-			logrus.Infof("%s: %s is ignored, skipping.", logPrefix, destAddr.String())
+			logger.Debugf("%s is ignored, skipping.", destAddr.String())
 			return false, 0
 		} else {
 			// the socket has never been bypassed and need to bypass
 			sockfd2, sockfd, err := duplicateSocketOnHost(pid, sockfd)
 			if err != nil {
-				logrus.Errorf("duplicating socket failed: %s", err)
+				logger.Errorf("duplicating socket failed: %s", err)
 				return false, 0
 			}
 
@@ -265,18 +265,18 @@ func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, 
 				fdInHost:  sockfd2,
 			}
 			h.socketInfo.status[key] = sockStatus
-			logrus.Debugf("%s: start to bypass fdInHost=%d fdInNetns=%d", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
+			logger.Debugf("start to bypass fdInHost=%d fdInNetns=%d", sockStatus.fdInHost, sockStatus.fdInNetns)
 			return true, sockfd2
 		}
 	} else {
 		if sockStatus.state == Bypassed {
 			if !destIsIgnored {
 				// the socket has been bypassed and continue to be bypassed
-				logrus.Debugf("%s: continue to bypass", logPrefix)
+				logger.Debugf("continue to bypass")
 				return false, 0
 			} else {
 				// the socket has been bypassed and need to switch back to socket in netns
-				logrus.Debugf("%s: switchback fdInHost(%d) -> fdInNetns(%d)", logPrefix, sockStatus.fdInHost, sockStatus.fdInNetns)
+				logger.Debugf("switchback fdInHost(%d) -> fdInNetns(%d)", sockStatus.fdInHost, sockStatus.fdInNetns)
 				sockStatus.state = SwitchBacked
 
 				h.socketInfo.status[key] = sockStatus
@@ -285,11 +285,11 @@ func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, 
 		} else if sockStatus.state == SwitchBacked {
 			if destIsIgnored {
 				// the socket has been switchbacked(not bypassed) and no need to be bypassed
-				logrus.Debugf("%s: continue not bypassing", logPrefix)
+				logger.Debugf("continue not bypassing")
 				return false, 0
 			} else {
 				// the socket has been switchbacked(not bypassed) and need to bypass again
-				logrus.Debugf("%s: bypass again fdInNetns(%d) -> fdInHost(%d)", logPrefix, sockStatus.fdInNetns, sockStatus.fdInHost)
+				logger.Debugf("bypass again fdInNetns(%d) -> fdInHost(%d)", sockStatus.fdInNetns, sockStatus.fdInHost)
 				sockStatus.state = Bypassed
 
 				h.socketInfo.status[key] = sockStatus
@@ -306,26 +306,26 @@ func (h *notifHandler) manageSocket(logPrefix string, destAddr net.IP, pid int, 
 // it creates and configures including bind(2) a socket on host.
 // Then, handler replaces container's socket to created one.
 func (h *notifHandler) handleSysBind(ctx *context) {
+	logger := logrus.WithFields(logrus.Fields{"syscall": "bind", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
 	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
-		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
-	logrus.Debugf("%v", addrInet)
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logrus.Infof("bind(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
 
 	// TODO: get port-fowrad mapping from nerdctl
 	fwdPort, ok := h.forwardingPorts[int(port)]
 	if !ok {
-		logrus.Infof("not mapped port=%d", port)
+		logger.Infof("port=%d is not target of port forwarding.", port)
 		return
 	}
 
 	sockfd2, sockfd, err := duplicateSocketOnHost(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
-		logrus.Errorf("duplicating socket failed: %s", err)
+		logger.Errorf("duplicating socket failed: %s", err)
 		return
 	}
 	defer syscall.Close(sockfd)
@@ -334,7 +334,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
 	if err != nil {
 		syscall.Close(sockfd2)
-		logrus.Errorf("setsocketoptions failed: %s", err)
+		logger.Errorf("configure socketoptions failed: %s", err)
 		return
 	}
 
@@ -345,7 +345,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 
 	err = syscall.Bind(sockfd2, &bind_addr)
 	if err != nil {
-		logrus.Errorf("bind failed: %s", err)
+		logger.Errorf("bind failed: %s", err)
 		return
 	}
 
@@ -359,18 +359,20 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
-		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		logger.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
+
+	logger.Infof("binding for %d:%d is done", fwdPort.HostPort, fwdPort.ChildPort)
 
 	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
 }
 
 // handleSysClose handles `close(2)` and delete recorded socket options.
 func (h *notifHandler) handleSysClose(ctx *context) {
-	sockfd := ctx.req.Data.Args[0]
-	logrus.Tracef("close(pid=%d): sockfd=%d", ctx.req.Pid, sockfd)
-	h.socketInfo.deleteSocket(ctx)
+	logger := logrus.WithFields(logrus.Fields{"syscall": "close", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
+	logger.Trace("handle")
+	h.socketInfo.deleteSocket(ctx, logger)
 }
 
 // handleSysConnect handles syscall connect(2).
@@ -378,22 +380,21 @@ func (h *notifHandler) handleSysClose(ctx *context) {
 // it creates and configures a socket on host.
 // Then, handler replaces container's socket to created one.
 func (h *notifHandler) handleSysConnect(ctx *context) {
+	logger := logrus.WithFields(logrus.Fields{"syscall": "connect", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
 	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
-		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
-	logrus.Debugf("%v", addrInet)
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logrus.Infof("connect(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
 
 	// TODO: more sophisticated way to convert.
 	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	logPrefix := fmt.Sprintf("connect(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
@@ -403,7 +404,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
 	if err != nil {
 		syscall.Close(sockfd2)
-		logrus.Errorf("setsocketoptions failed: %s", err)
+		logger.Errorf("configure socketoptions failed: %s", err)
 		return
 	}
 
@@ -417,7 +418,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
-		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		logger.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
 }
@@ -433,16 +434,17 @@ type msgHdrName struct {
 // Then, handler replaces container's socket to created one.
 // This handles only SOCK_DGRAM sockets.
 func (h *notifHandler) handleSysSendmsg(ctx *context) {
+	logger := logrus.WithFields(logrus.Fields{"syscall": "sendmsg", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
 	msghdr := msgHdrName{}
 	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], 12)
 	if err != nil {
-		logrus.Errorf("failed readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+		logger.Errorf("failed readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
 	}
 
 	reader := bytes.NewReader(buf)
 	err = binary.Read(reader, binary.LittleEndian, &msghdr)
 	if err != nil {
-		logrus.Errorf("cannnot cast byte array to Msghdr: %s", err)
+		logger.Errorf("cannnot cast byte array to Msghdr: %s", err)
 	}
 
 	// addrlen == 0 means the socket is already connected
@@ -452,42 +454,40 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 
 	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
-		logrus.Errorf("failed to get fd: %s", err)
+		logger.Errorf("failed to get fd: %s", err)
 	}
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logrus.Error("failed to get socket args: %s", err)
+		logger.Error("failed to get socket args: %s", err)
 		return
 	}
 
 	if sock_domain != syscall.AF_INET {
-		logrus.Debug("only supported AF_INET: %d")
+		logger.Debug("only supported AF_INET: %d")
 		return
 	}
 
 	if sock_type != syscall.SOCK_DGRAM {
-		logrus.Debug("only SOCK_DGRAM sockets are handled")
+		logger.Debug("only SOCK_DGRAM sockets are handled")
 		return
 	}
 
 	addrOffset := uint64(msghdr.Name)
 	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, addrOffset, uint64(msghdr.Namelen))
 	if err != nil {
-		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
-	logrus.Debugf("%v", addrInet)
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logrus.Infof("sendmsg(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
 
 	// TODO: more sophisticated way to convert.
 	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	logPrefix := fmt.Sprintf("sendmsg(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
@@ -497,7 +497,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
 	if err != nil {
 		syscall.Close(sockfd2)
-		logrus.Errorf("setsocketoptions failed: %s", err)
+		logger.Errorf("setsocketoptions failed: %s", err)
 		return
 	}
 
@@ -511,7 +511,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
-		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		logger.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
 }
@@ -522,6 +522,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 // Then, handler replaces container's socket to created one.
 // This handles only SOCK_DGRAM sockets.
 func (h *notifHandler) handleSysSendto(ctx *context) {
+	logger := logrus.WithFields(logrus.Fields{"syscall": "sendto", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
 	// addrlen == 0 is send(2)
 	if ctx.req.Data.Args[5] == 0 {
 		return
@@ -529,41 +530,39 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 
 	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
 	if err != nil {
-		logrus.Errorf("failed to get fd: %s", err)
+		logger.Errorf("failed to get fd: %s", err)
 	}
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logrus.Error("failed to get socket args: %s", err)
+		logger.Error("failed to get socket args: %s", err)
 		return
 	}
 
 	if sock_domain != syscall.AF_INET {
-		logrus.Debug("only supported AF_INET: %d")
+		logger.Debug("only supported AF_INET: %d")
 		return
 	}
 
 	if sock_type != syscall.SOCK_DGRAM {
-		logrus.Debug("only SOCK_DGRAM sockets are handled")
+		logger.Debug("only SOCK_DGRAM sockets are handled")
 		return
 	}
 
 	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[4], ctx.req.Data.Args[5])
 	if err != nil {
-		logrus.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read addrInet4 from process: %s", err)
 		return
 	}
 
-	logrus.Debugf("%v", addrInet)
 	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logrus.Infof("sendto(pid=%d): sockfd=%d, port=%d, ip=%v", ctx.req.Pid, ctx.req.Data.Args[0], port, addrInet.Addr)
+	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
 
 	// TODO: more sophisticated way to convert.
 	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
-	logPrefix := fmt.Sprintf("sendto(pid=%d sockfd=%d)", ctx.req.Pid, ctx.req.Data.Args[0])
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(logPrefix, ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
+	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
@@ -573,7 +572,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
 	if err != nil {
 		syscall.Close(sockfd2)
-		logrus.Errorf("setsocketoptions failed: %s", err)
+		logger.Errorf("configure socketoptions failed: %s", err)
 		return
 	}
 
@@ -587,7 +586,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
 	if err != nil {
-		logrus.Errorf("ioctl NotifAddFd failed: %s", err)
+		logger.Errorf("ioctl NotifAddFd failed: %s", err)
 		return
 	}
 }
@@ -595,10 +594,11 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 // handleSyssetsockopt handles `setsockopt(2)` and records options.
 // Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
 func (h *notifHandler) handleSysSetsockopt(ctx *context) {
-	logrus.Debugf("setsockopt(pid=%d): sockfd=%d", ctx.req.Pid, ctx.req.Data.Args[0])
-	err := h.socketInfo.recordSocketOption(ctx)
+	logger := logrus.WithFields(logrus.Fields{"syscall": "setsockopt", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
+	logger.Debugf("handle")
+	err := h.socketInfo.recordSocketOption(ctx, logger)
 	if err != nil {
-		logrus.Errorf("recordSocketOption failed: %s", err)
+		logger.Errorf("recordSocketOption failed: %s", err)
 	}
 }
 
@@ -788,6 +788,7 @@ func (h *Handler) StartHandle() {
 
 	for {
 		conn, err := l.Accept()
+		logrus.Info("accept connection")
 		if err != nil {
 			logrus.Errorf("Cannot accept connection: %s", err)
 			continue

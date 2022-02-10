@@ -34,13 +34,20 @@ func main() {
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
-	logrus.SetLevel(logrus.DebugLevel)
+	debug := flag.Bool("debug", false, "Enable debug mode")
 
 	// Parse arguments
 	flag.Parse()
 	if flag.NArg() > 0 {
 		flag.PrintDefaults()
 		logrus.Fatal("Invalid command")
+	}
+
+	if *debug {
+		logrus.Info("Debug mode enabled")
+		logrus.SetLevel(logrus.DebugLevel)
+	} else {
+		logrus.SetLevel(logrus.InfoLevel)
 	}
 
 	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -52,6 +59,7 @@ func main() {
 		if err := os.WriteFile(pidFile, []byte(pid), 0o644); err != nil {
 			logrus.Fatalf("Cannot write pid file: %v", err)
 		}
+		logrus.Infof("PidFilePath: %s", pidFile)
 	}
 
 	if logFilePath != "" {
@@ -61,8 +69,10 @@ func main() {
 		}
 		defer logFile.Close()
 		logrus.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		logrus.Infof("LogFilePath: %s", logFilePath)
 	}
 
+	logrus.Infof("SocketPath: %s", socketFile)
 	handler := bypass4netns.NewHandler(socketFile)
 
 	subnets := []net.IPNet{}
@@ -72,7 +82,7 @@ func main() {
 			logrus.Fatalf("%s is not CIDR format", subnetStr)
 		}
 		subnets = append(subnets, *subnet)
-		logrus.Debugf("%s is added to ignore", subnet)
+		logrus.Infof("%s is added to ignore", subnet)
 	}
 	handler.SetIgnoredSubnets(subnets)
 
@@ -97,7 +107,7 @@ func main() {
 		if err != nil {
 			logrus.Fatalf("failed to set fowardind port '%s' : %s", forwardPortStr, err)
 		}
-		logrus.Debugf("fowarding port %s (host=%d container=%d) is added", forwardPortStr, hostPort, childPort)
+		logrus.Infof("fowarding port %s (host=%d container=%d) is added", forwardPortStr, hostPort, childPort)
 	}
 
 	if readyFd >= 0 {

@@ -62,6 +62,8 @@ func (d *Driver) ListBypass() []BypassStatus {
 }
 
 func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
+	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(spec.ID)})
+	logger.Info("Starting bypass")
 	b4nsArgs := []string{}
 
 	if spec.SocketPath != "" {
@@ -99,7 +101,7 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	readyFdOption := "--ready-fd=3"
 	b4nsArgs = append(b4nsArgs, readyFdOption)
 
-	logrus.Infof("bypass4netns args:%v", b4nsArgs)
+	logger.Infof("bypass4netns args:%v", b4nsArgs)
 	b4nsCmd := exec.Command(d.BypassExecutablePath, b4nsArgs...)
 	b4nsCmd.ExtraFiles = append(b4nsCmd.ExtraFiles, readyW)
 	err = b4nsCmd.Start()
@@ -111,6 +113,7 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	logger.Info("bypass4netns successfully started")
 
 	d.lock.Lock()
 	defer d.lock.Unlock()
@@ -121,11 +124,14 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	}
 
 	d.bypass[status.ID] = status
+	logger.Info("Started bypass")
 
 	return &status, nil
 }
 
 func (d *Driver) StopBypass(id string) error {
+	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(id)})
+	logger.Infof("Stopping bypass")
 	d.lock.Lock()
 	defer d.lock.Unlock()
 
@@ -138,17 +144,21 @@ func (d *Driver) StopBypass(id string) error {
 	if err != nil {
 		return err
 	}
+	logger.Debugf("bypass4netns found pid=%d", proc.Pid)
 
 	err = proc.Kill()
 	if err != nil {
 		return err
 	}
+	logger.Infof("Killing bypass4netns pid=%d", proc.Pid)
 
 	// wait for the process exit
 	// TODO: Timeout
 	proc.Wait()
+	logger.Infof("Killed bypass4netns pid=%d", proc.Pid)
 
 	delete(d.bypass, id)
+	logger.Info("Stopped bypass")
 
 	return nil
 }
@@ -186,4 +196,16 @@ func waitForReadyFD(cmdPid int, r *os.File) error {
 		}
 	}
 	return nil
+}
+
+// shrinkID shrinks id to short(12 chars) id
+// 6d9bcda7cebd551ddc9e3173d2139386e21b56b241f8459c950ef58e036f6bd8
+// to
+// 6d9bcda7cebd
+func shrinkID(id string) string {
+	if len(id) < 12 {
+		return id
+	}
+
+	return id[0:12]
 }

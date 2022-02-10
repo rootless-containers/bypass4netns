@@ -57,7 +57,7 @@ func (info *socketInfo) configureSocket(ctx *context, sockfd int) error {
 }
 
 // recordSocketOption records socket option.
-func (info *socketInfo) recordSocketOption(ctx *context) error {
+func (info *socketInfo) recordSocketOption(ctx *context, logger *logrus.Entry) error {
 	sockfd := ctx.req.Data.Args[0]
 	level := ctx.req.Data.Args[1]
 	optname := ctx.req.Data.Args[2]
@@ -81,18 +81,18 @@ func (info *socketInfo) recordSocketOption(ctx *context) error {
 	}
 	info.options[key] = append(info.options[key], value)
 
-	logrus.Debugf("recorded socket option sockfd=%d level=%d optname=%d optval=%v optlen=%d", sockfd, level, optname, optval, optlen)
+	logger.Debugf("recorded socket option sockfd=%d level=%d optname=%d optval=%v optlen=%d", sockfd, level, optname, optval, optlen)
 	return nil
 }
 
 // deleteSocketOptions delete recorded socket options and status
-func (info *socketInfo) deleteSocket(ctx *context) {
+func (info *socketInfo) deleteSocket(ctx *context, logger *logrus.Entry) {
 	sockfd := ctx.req.Data.Args[0]
 	key := fmt.Sprintf("%d:%d", ctx.req.Pid, sockfd)
 	_, ok := info.options[key]
 	if ok {
 		delete(info.options, key)
-		logrus.Debugf("removed socket options(pid=%d sockfd=%d key=%s)", ctx.req.Pid, sockfd, key)
+		logger.Debugf("removed socket options")
 	}
 
 	status, ok := info.status[key]
@@ -100,6 +100,6 @@ func (info *socketInfo) deleteSocket(ctx *context) {
 		delete(info.status, key)
 		syscall.Close(status.fdInHost)
 		syscall.Close(status.fdInHost)
-		logrus.Debugf("removed socket status(fdInNetns=%d fdInHost=%d)", status.fdInNetns, status.fdInHost)
+		logger.Debugf("removed socket status(fdInNetns=%d fdInHost=%d)", status.fdInNetns, status.fdInHost)
 	}
 }

@@ -24,13 +24,15 @@ var (
 )
 
 func main() {
+	logrus.Info("bypass4netnsd started")
+
 	xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if xdgRuntimeDir == "" {
-		panic("$XDG_RUNTIME_DIR needs to be set")
+		logrus.Fatalf("$XDG_RUNTIME_DIR needs to be set")
 	}
 	exePath, err := os.Executable()
 	if err != nil {
-		panic(err)
+		logrus.Fatalf("failed to get myself executable path: %s", err)
 	}
 	defaultB4nsPath := filepath.Join(filepath.Dir(exePath), "bypass4netns")
 
@@ -38,13 +40,20 @@ func main() {
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.StringVar(&b4nsPath, "b4ns-executable", defaultB4nsPath, "Path to bypass4netns executable")
-	logrus.SetLevel(logrus.DebugLevel)
+	debug := flag.Bool("debug", false, "Enable debug mode")
 
 	// Parse arguments
 	flag.Parse()
 	if flag.NArg() > 0 {
 		flag.PrintDefaults()
 		logrus.Fatal("Invalid command")
+	}
+
+	if *debug {
+		logrus.Info("Debug mode enabled")
+		logrus.SetLevel(logrus.DebugLevel)
+	} else {
+		logrus.SetLevel(logrus.InfoLevel)
 	}
 
 	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -71,9 +80,9 @@ func main() {
 	}
 
 	if _, err = os.Stat(b4nsPath); err != nil {
-		logrus.Fatalf("Bypass4netns executable not found %s", b4nsPath)
+		logrus.Fatalf("bypass4netns executable not found %s", b4nsPath)
 	}
-	logrus.Infof("Bypass4netns executable path: %s", b4nsPath)
+	logrus.Infof("bypass4netns executable path: %s", b4nsPath)
 
 	err = listenServeAPI(socketFile, &router.Backend{
 		BypassDriver: bypass4netns.NewDriver(b4nsPath),
@@ -95,6 +104,7 @@ func listenServeAPI(socketPath string, backend *router.Backend) error {
 	if err != nil {
 		return err
 	}
+	logrus.Infof("Starting to serve on %s", socketPath)
 	srv.Serve(l)
 
 	return nil
