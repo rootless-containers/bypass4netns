@@ -20,7 +20,7 @@ var (
 	socketFile  string
 	pidFile     string
 	logFilePath string
-	b4nsPath    string
+	b4nnPath    string
 )
 
 func main() {
@@ -34,12 +34,12 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("failed to get myself executable path: %s", err)
 	}
-	defaultB4nsPath := filepath.Join(filepath.Dir(exePath), "bypass4netns")
+	defaultB4nnPath := filepath.Join(filepath.Dir(exePath), "bypass4netns")
 
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, "bypass4netnsd.sock"), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
-	flag.StringVar(&b4nsPath, "b4ns-executable", defaultB4nsPath, "Path to bypass4netns executable")
+	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 
 	// Parse arguments
@@ -79,13 +79,13 @@ func main() {
 		logrus.Infof("LogFilePath %s", logFilePath)
 	}
 
-	if _, err = os.Stat(b4nsPath); err != nil {
-		logrus.Fatalf("bypass4netns executable not found %s", b4nsPath)
+	if _, err = os.Stat(b4nnPath); err != nil {
+		logrus.Fatalf("bypass4netns executable not found %s", b4nnPath)
 	}
-	logrus.Infof("bypass4netns executable path: %s", b4nsPath)
+	logrus.Infof("bypass4netns executable path: %s", b4nnPath)
 
 	err = listenServeAPI(socketFile, &router.Backend{
-		BypassDriver: bypass4netns.NewDriver(b4nsPath),
+		BypassDriver: bypass4netns.NewDriver(b4nnPath),
 	})
 	if err != nil {
 		logrus.Fatalf("failed to serve API: %s", err)

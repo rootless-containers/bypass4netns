@@ -64,29 +64,29 @@ func (d *Driver) ListBypass() []BypassStatus {
 func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(spec.ID)})
 	logger.Info("Starting bypass")
-	b4nsArgs := []string{}
+	b4nnArgs := []string{}
 
 	if spec.SocketPath != "" {
 		socketOption := fmt.Sprintf("--socket=%s", spec.SocketPath)
-		b4nsArgs = append(b4nsArgs, socketOption)
+		b4nnArgs = append(b4nnArgs, socketOption)
 	}
 
 	if spec.PidFilePath != "" {
 		pidFileOption := fmt.Sprintf("--pid-file=%s", spec.PidFilePath)
-		b4nsArgs = append(b4nsArgs, pidFileOption)
+		b4nnArgs = append(b4nnArgs, pidFileOption)
 	}
 
 	if spec.LogFilePath != "" {
 		logFileOption := fmt.Sprintf("--log-file=%s", spec.LogFilePath)
-		b4nsArgs = append(b4nsArgs, logFileOption)
+		b4nnArgs = append(b4nnArgs, logFileOption)
 	}
 
 	for _, port := range spec.PortMapping {
-		b4nsArgs = append(b4nsArgs, fmt.Sprintf("-p=%d:%d", port.ParentPort, port.ChildPort))
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("-p=%d:%d", port.ParentPort, port.ChildPort))
 	}
 
 	for _, subnet := range spec.IgnoreSubnets {
-		b4nsArgs = append(b4nsArgs, fmt.Sprintf("--ignore=%s", subnet))
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--ignore=%s", subnet))
 	}
 
 	// prepare pipe for ready notification
@@ -97,19 +97,19 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	defer readyR.Close()
 	defer readyW.Close()
 
-	// fd in b4nsCmd.ExtraFiles is assigned in child process from fd=3
+	// fd in b4nnCmd.ExtraFiles is assigned in child process from fd=3
 	readyFdOption := "--ready-fd=3"
-	b4nsArgs = append(b4nsArgs, readyFdOption)
+	b4nnArgs = append(b4nnArgs, readyFdOption)
 
-	logger.Infof("bypass4netns args:%v", b4nsArgs)
-	b4nsCmd := exec.Command(d.BypassExecutablePath, b4nsArgs...)
-	b4nsCmd.ExtraFiles = append(b4nsCmd.ExtraFiles, readyW)
-	err = b4nsCmd.Start()
+	logger.Infof("bypass4netns args:%v", b4nnArgs)
+	b4nnCmd := exec.Command(d.BypassExecutablePath, b4nnArgs...)
+	b4nnCmd.ExtraFiles = append(b4nnCmd.ExtraFiles, readyW)
+	err = b4nnCmd.Start()
 	if err != nil {
 		return nil, err
 	}
 
-	err = waitForReadyFD(b4nsCmd.Process.Pid, readyR)
+	err = waitForReadyFD(b4nnCmd.Process.Pid, readyR)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 	defer d.lock.Unlock()
 	status := BypassStatus{
 		ID:   spec.ID,
-		Pid:  b4nsCmd.Process.Pid,
+		Pid:  b4nnCmd.Process.Pid,
 		Spec: *spec,
 	}
 

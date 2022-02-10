@@ -79,7 +79,7 @@ Vagrant.configure("2") do |config|
     echo "===== Test bypass4netnsd ====="
     (
      set -x
-     /vagrant/test/test_b4nsd.sh
+     /vagrant/test/test_b4nnd.sh
     )
 
     echo "===== Benchmark: netns -> host With bypass4netns ====="
