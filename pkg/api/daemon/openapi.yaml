@@ -1,0 +1,122 @@
+# This code is copied from https://github.com/rootless-containers/rootlesskit/blob/master/pkg/api/openapi.yaml v0.14.6
+# The code is licensed under Apache-2.0
+
+openapi: 3.0.3
+info:
+  title: bypass4netnsd API
+  version: 0.0.1
+servers:
+  - url: 'http://bypass4netnsd/v1'
+
+paths:
+  /bypass:
+    get:
+      responses:
+        '200':
+          description: An array of BypassStatus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BypassStatuses'
+
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BypassSpec'
+      responses:
+        '201':
+          description: BypassStatus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BypassStatus'
+  
+  /bypass/{id}:
+    delete:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Null response
+
+components:
+  schemas:
+    Proto:
+      type: string
+      description: "protocol for listening. Corresponds to Go's net.Listen."
+      enum:
+        - tcp
+        - tcp4
+        - tcp6
+        - udp
+        - udp4
+        - udp6
+        - sctp
+        - sctp4
+        - sctp6
+
+    BypassStatuses:
+      type: array
+      items:
+        $ref: '#/components/schemas/BypassStatus'
+        
+    BypassStatus:
+      required:
+        - id
+        - pid
+      properties:
+        id:
+          type: string
+        pid:
+          type: integer
+        spec:
+          $ref: '#/components/schemas/BypassSpec'
+
+    BypassSpec:
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        socketPath:
+          type: string
+        pidFilePath:
+          type: string
+        logFilePath:
+          type: string
+        portMapping:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortSpec'
+        ignoreSubnets:
+          type: array
+          items:
+            type: string
+
+    PortSpec:
+      properties:
+        protos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Proto'
+        parentIP:
+          type: string
+        parentPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        childIP:
+          type: string
+        childPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535

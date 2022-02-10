@@ -22,6 +22,8 @@ cat <<EOF
         "bind",
         "close",
         "connect",
+        "sendmsg",
+        "sendto",
         "setsockopt"
       ],
       "action": "SCMP_ACT_NOTIFY"
