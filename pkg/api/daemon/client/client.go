@@ -1,4 +1,4 @@
-// This code is copied from https://github.com/rootless-containers/rootlesskit/blob/master/pkg/api/client/client.go
+// This code is copied from https://github.com/rootless-containers/rootlesskit/blob/master/pkg/api/client/client.go v0.14.6
 // The code is licensed under Apache-2.0
 
 package client

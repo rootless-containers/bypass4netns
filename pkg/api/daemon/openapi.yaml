@@ -1,4 +1,4 @@
-# This code is copied from https://github.com/rootless-containers/rootlesskit/blob/master/pkg/api/openapi.yaml
+# This code is copied from https://github.com/rootless-containers/rootlesskit/blob/master/pkg/api/openapi.yaml v0.14.6
 # The code is licensed under Apache-2.0
 
 openapi: 3.0.3
@@ -50,7 +50,7 @@ components:
   schemas:
     Proto:
       type: string
-      description: "protocol for listening. Corresponds to Go's net.Listen. The strings with \"4\" and \"6\" suffixes were introduced in API 1.1.0."
+      description: "protocol for listening. Corresponds to Go's net.Listen."
       enum:
         - tcp
         - tcp4
