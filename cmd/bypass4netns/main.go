@@ -19,6 +19,7 @@ var (
 	socketFile  string
 	pidFile     string
 	logFilePath string
+	readyFd     int
 )
 
 func main() {
@@ -30,6 +31,7 @@ func main() {
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, bypass4netns.SocketName), "Socket file")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
+	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	logrus.SetLevel(logrus.DebugLevel)
@@ -96,6 +98,13 @@ func main() {
 			logrus.Fatalf("failed to set fowardind port '%s' : %s", forwardPortStr, err)
 		}
 		logrus.Debugf("fowarding port %s (host=%d container=%d) is added", forwardPortStr, hostPort, childPort)
+	}
+
+	if readyFd >= 0 {
+		err := handler.SetReadyFd(readyFd)
+		if err != nil {
+			logrus.Fatalf("failed to set readyFd: %s", err)
+		}
 	}
 
 	handler.StartHandle()

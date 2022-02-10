@@ -1,10 +1,13 @@
 package bypass4netns
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -59,9 +62,6 @@ func (d *Driver) ListBypass() []BypassStatus {
 }
 
 func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
-	d.lock.Lock()
-	defer d.lock.Unlock()
-
 	b4nsArgs := []string{}
 
 	if spec.SocketPath != "" {
@@ -87,13 +87,33 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 		b4nsArgs = append(b4nsArgs, fmt.Sprintf("--ignore=%s", subnet))
 	}
 
+	// prepare pipe for ready notification
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer readyR.Close()
+	defer readyW.Close()
+
+	// fd in b4nsCmd.ExtraFiles is assigned in child process from fd=3
+	readyFdOption := "--ready-fd=3"
+	b4nsArgs = append(b4nsArgs, readyFdOption)
+
 	logrus.Infof("bypass4netns args:%v", b4nsArgs)
 	b4nsCmd := exec.Command(d.BypassExecutablePath, b4nsArgs...)
-	err := b4nsCmd.Start()
+	b4nsCmd.ExtraFiles = append(b4nsCmd.ExtraFiles, readyW)
+	err = b4nsCmd.Start()
 	if err != nil {
 		return nil, err
 	}
 
+	err = waitForReadyFD(b4nsCmd.Process.Pid, readyR)
+	if err != nil {
+		return nil, err
+	}
+
+	d.lock.Lock()
+	defer d.lock.Unlock()
 	status := BypassStatus{
 		ID:   spec.ID,
 		Pid:  b4nsCmd.Process.Pid,
@@ -130,5 +150,40 @@ func (d *Driver) StopBypass(id string) error {
 
 	delete(d.bypass, id)
 
+	return nil
+}
+
+// waitForReady is from libpod
+// https://github.com/containers/libpod/blob/e6b843312b93ddaf99d0ef94a7e60ff66bc0eac8/libpod/networking_linux.go#L272-L308
+func waitForReadyFD(cmdPid int, r *os.File) error {
+	b := make([]byte, 16)
+	for {
+		if err := r.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
+			return fmt.Errorf("error setting bypass4netns pipe timeout: %w", err)
+		}
+		if _, err := r.Read(b); err == nil {
+			break
+		} else {
+			if os.IsTimeout(err) {
+				// Check if the process is still running.
+				var status syscall.WaitStatus
+				pid, err := syscall.Wait4(cmdPid, &status, syscall.WNOHANG, nil)
+				if err != nil {
+					return fmt.Errorf("failed to read bypass4netns process status: %w", err)
+				}
+				if pid != cmdPid {
+					continue
+				}
+				if status.Exited() {
+					return errors.New("bypass4netns failed")
+				}
+				if status.Signaled() {
+					return errors.New("bypass4netns killed by signal")
+				}
+				continue
+			}
+			return fmt.Errorf("failed to read from bypass4netns sync pipe: %w", err)
+		}
+	}
 	return nil
 }

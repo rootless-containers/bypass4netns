@@ -681,6 +681,7 @@ type ForwardPortMapping struct {
 type Handler struct {
 	socketPath     string
 	ignoredSubnets []net.IPNet
+	readyFd        int
 
 	// key is child port
 	forwardingPorts map[int]ForwardPortMapping
@@ -692,6 +693,7 @@ func NewHandler(socketPath string) *Handler {
 		socketPath:      socketPath,
 		ignoredSubnets:  []net.IPNet{},
 		forwardingPorts: map[int]ForwardPortMapping{},
+		readyFd:         -1,
 	}
 
 	return &handler
@@ -714,6 +716,16 @@ func (h *Handler) SetForwardingPort(mapping ForwardPortMapping) error {
 	}
 
 	h.forwardingPorts[mapping.ChildPort] = mapping
+	return nil
+}
+
+// SetReadyFd configure ready notification file descriptor
+func (h *Handler) SetReadyFd(fd int) error {
+	if fd < 0 {
+		return fmt.Errorf("ready-fd must be a non-negative integer")
+	}
+
+	h.readyFd = fd
 	return nil
 }
 
@@ -764,6 +776,15 @@ func (h *Handler) StartHandle() {
 		logrus.Fatalf("Cannot listen: %w", err)
 	}
 	defer l.Close()
+
+	if h.readyFd >= 0 {
+		logrus.Infof("notify ready fd=%d", h.readyFd)
+		_, err = syscall.Write(h.readyFd, []byte{1})
+		if err != nil {
+			logrus.Fatalf("failed to notify fd=%d", h.readyFd)
+		}
+		syscall.Close(h.readyFd)
+	}
 
 	for {
 		conn, err := l.Accept()
