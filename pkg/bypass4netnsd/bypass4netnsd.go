@@ -1,4 +1,4 @@
-package bypass4netns
+package bypass4netnsd
 
 import (
 	"errors"

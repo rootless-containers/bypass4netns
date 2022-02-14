@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/rootless-containers/bypass4netns/pkg/api/daemon/router"
-	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netnsd"
+	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
@@ -24,8 +26,6 @@ var (
 )
 
 func main() {
-	logrus.Info("bypass4netnsd started")
-
 	xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if xdgRuntimeDir == "" {
 		logrus.Fatalf("$XDG_RUNTIME_DIR needs to be set")
@@ -41,6 +41,7 @@ func main() {
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
 	debug := flag.Bool("debug", false, "Enable debug mode")
+	version := flag.Bool("version", false, "Show version")
 
 	// Parse arguments
 	flag.Parse()
@@ -54,6 +55,11 @@ func main() {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
 		logrus.SetLevel(logrus.InfoLevel)
+	}
+
+	if *version {
+		fmt.Printf("bypass4netnsd version %s\n", strings.TrimPrefix(pkgversion.Version, "v"))
+		os.Exit(0)
 	}
 
 	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -85,7 +91,7 @@ func main() {
 	logrus.Infof("bypass4netns executable path: %s", b4nnPath)
 
 	err = listenServeAPI(socketFile, &router.Backend{
-		BypassDriver: bypass4netns.NewDriver(b4nnPath),
+		BypassDriver: bypass4netnsd.NewDriver(b4nnPath),
 	})
 	if err != nil {
 		logrus.Fatalf("failed to serve API: %s", err)
