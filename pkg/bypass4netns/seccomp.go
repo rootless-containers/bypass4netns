@@ -5,6 +5,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/vtolstov/go-ioctl"
 )
@@ -41,4 +42,20 @@ func (addfd *seccompNotifAddFd) ioctlNotifAddFd(notifFd libseccomp.ScmpFd) error
 		return fmt.Errorf("ioctl(SECCOMP_IOCTL_NOTIF_ADFD) failed: %s", errno)
 	}
 	return nil
+}
+
+func GetDefaultSeccompProfile() *specs.LinuxSeccomp {
+	seccomp := &specs.LinuxSeccomp{
+		DefaultAction: specs.ActAllow,
+		Architectures: []specs.Arch{specs.ArchX86_64, specs.ArchX86, specs.ArchX32},
+		ListenerPath:  "",
+		Syscalls: []specs.LinuxSyscall{
+			{
+				Names:  []string{"bind", "close", "connect", "sendmsg", "sendto", "setsockopt"},
+				Action: specs.ActNotify,
+			},
+		},
+	}
+
+	return seccomp
 }

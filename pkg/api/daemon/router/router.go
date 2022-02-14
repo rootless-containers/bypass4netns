@@ -7,6 +7,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rootless-containers/bypass4netns/pkg/api"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
+	"github.com/sirupsen/logrus"
 )
 
 type Backend struct {
@@ -76,9 +78,23 @@ func (b *Backend) DeleteBypass(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (b *Backend) GetDefaultSeccompProfile(w http.ResponseWriter, r *http.Request) {
+	profile := bypass4netns.GetDefaultSeccompProfile()
+	m, err := json.Marshal(profile)
+	if err != nil {
+		b.onError(w, r, err, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(m)
+	logrus.Debugf("GET /seccomp/profile")
+}
+
 func AddRoutes(r *mux.Router, b *Backend) {
 	v1 := r.PathPrefix("/v1").Subrouter()
 	v1.Path("/bypass").Methods("GET").HandlerFunc(b.GetBypasses)
 	v1.Path("/bypass").Methods("POST").HandlerFunc(b.PostBypass)
 	v1.Path("/bypass/{id}").Methods("DELETE").HandlerFunc(b.DeleteBypass)
+	v1.Path("/seccomp/profile/default").Methods("GET").HandlerFunc(b.GetDefaultSeccompProfile)
 }

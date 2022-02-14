@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/rootless-containers/bypass4netns/pkg/api"
 )
 
@@ -189,4 +190,27 @@ func (bm *BypassManager) StopBypass(ctx context.Context, id string) error {
 		return err
 	}
 	return nil
+}
+
+func (bm *BypassManager) GetDefaultSeccompProfile(ctx context.Context) (*specs.LinuxSeccomp, error) {
+	u := fmt.Sprintf("http://%s/%s/seccomp/profile/default", bm.client.dummyHost, bm.client.version)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	resp, err := bm.client.HTTPClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := successful(resp); err != nil {
+		return nil, err
+	}
+	var spec specs.LinuxSeccomp
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
 }
