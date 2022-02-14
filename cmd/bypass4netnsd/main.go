@@ -16,6 +16,7 @@ import (
 	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -26,6 +27,7 @@ var (
 )
 
 func main() {
+	unix.Umask(0o077) // https://github.com/golang/go/issues/11822#issuecomment-123850227
 	xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if xdgRuntimeDir == "" {
 		logrus.Fatalf("$XDG_RUNTIME_DIR needs to be set")
