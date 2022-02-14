@@ -20,6 +20,7 @@ Vagrant.configure("2") do |config|
     set -eu -o pipefail
 
     NERDCTL_VERSION="0.16.1"
+    NERDCTL_GIT_HASH="3e0e5d1bd1a6312f48473e6a1c5dcf9dbe723b0c"
     ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.15"
     echo "===== Prepare ====="
     (
@@ -38,9 +39,10 @@ Vagrant.configure("2") do |config|
 
      # replace nerdctl with bypass4netns patched one
      cd /tmp
-     git clone -b bypass4netns-dev https://github.com/naoki9911/nerdctl
+     git clone https://github.com/naoki9911/nerdctl
      cd nerdctl
-     sed -i -e 's:\\.\\.\/bypass4netns:\/vagrant:g' go.mod
+     git checkout $NERDCTL_GIT_HASH
+     echo "replace github.com/rootless-containers/bypass4netns => /vagrant" >> go.mod
      make
      sudo cp _output/nerdctl /usr/local/bin/.
 
