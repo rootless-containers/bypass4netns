@@ -20,7 +20,7 @@ Vagrant.configure("2") do |config|
     set -eu -o pipefail
 
     NERDCTL_VERSION="0.16.1"
-    NERDCTL_GIT_HASH="3e0e5d1bd1a6312f48473e6a1c5dcf9dbe723b0c"
+    NERDCTL_GIT_HASH="1b91648394def2f350e271d0ab29bacc437c3f9e"
     ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.15"
     echo "===== Prepare ====="
     (
@@ -37,12 +37,11 @@ Vagrant.configure("2") do |config|
      containerd-rootless-setuptool.sh install
      containerd-rootless-setuptool.sh install-buildkit
 
-     # replace nerdctl with bypass4netns patched one
+     # replace nerdctl with bypass4netns patched one (TODO: remove this after the release of nerdctl v0.17)
      cd /tmp
-     git clone https://github.com/naoki9911/nerdctl
+     git clone https://github.com/containerd/nerdctl
      cd nerdctl
      git checkout $NERDCTL_GIT_HASH
-     echo "replace github.com/rootless-containers/bypass4netns => /vagrant" >> go.mod
      make
      sudo cp _output/nerdctl /usr/local/bin/.
 
