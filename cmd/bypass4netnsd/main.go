@@ -12,9 +12,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rootless-containers/bypass4netns/pkg/api/daemon/router"
-	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netnsd"
 	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
-	seccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
@@ -60,8 +59,6 @@ func main() {
 
 	if *version {
 		fmt.Printf("bypass4netnsd version %s\n", strings.TrimPrefix(pkgversion.Version, "v"))
-		major, minor, micro := seccomp.GetLibraryVersion()
-		fmt.Printf("libseccomp: %d.%d.%d\n", major, minor, micro)
 		os.Exit(0)
 	}
 
@@ -94,7 +91,7 @@ func main() {
 	logrus.Infof("bypass4netns executable path: %s", b4nnPath)
 
 	err = listenServeAPI(socketFile, &router.Backend{
-		BypassDriver: bypass4netns.NewDriver(b4nnPath),
+		BypassDriver: bypass4netnsd.NewDriver(b4nnPath),
 	})
 	if err != nil {
 		logrus.Fatalf("failed to serve API: %s", err)
