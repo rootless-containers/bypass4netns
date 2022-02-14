@@ -1,7 +1,11 @@
 GO ?= go
+PACKAGE := github.com/rootless-containers/bypass4netns
+VERSION=$(shell git describe --match 'v[0-9]*' --dirty='.m' --always --tags)
+VERSION_TRIMMED := $(VERSION:v%=%)
 GO_BUILD_FLAGS += -trimpath
-GO_BUILD := $(GO) build $(GO_BUILD_FLAGS)
-GO_BUILD_STATIC := CGO_ENABLED=1 $(GO) build $(GO_BUILD_FLAGS) -tags "netgo osusergo" -ldflags "-extldflags -static"
+GO_BUILD_LDFLAGS += -s -w -X $(PACKAGE)/pkg/version.Version=$(VERSION)
+GO_BUILD := $(GO) build $(GO_BUILD_FLAGS) -ldflags "$(GO_BUILD_LDFLAGS)"
+GO_BUILD_STATIC := CGO_ENABLED=1 $(GO) build $(GO_BUILD_FLAGS) -tags "netgo osusergo" -ldflags "$(GO_BUILD_LDFLAGS) -extldflags -static"
 
 STRIP ?= strip
 

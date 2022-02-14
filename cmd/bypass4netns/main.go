@@ -12,6 +12,8 @@ import (
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/rootless-containers/bypass4netns/pkg/oci"
+	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
+	"github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
@@ -36,6 +38,7 @@ func main() {
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	debug := flag.Bool("debug", false, "Enable debug mode")
+	version := flag.Bool("version", false, "Show version")
 
 	// Parse arguments
 	flag.Parse()
@@ -49,6 +52,13 @@ func main() {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
 		logrus.SetLevel(logrus.InfoLevel)
+	}
+
+	if *version {
+		fmt.Printf("bypass4netns version %s\n", strings.TrimPrefix(pkgversion.Version, "v"))
+		major, minor, micro := seccomp.GetLibraryVersion()
+		fmt.Printf("libseccomp: %d.%d.%d\n", major, minor, micro)
+		os.Exit(0)
 	}
 
 	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
