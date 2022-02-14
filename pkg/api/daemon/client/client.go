@@ -15,7 +15,6 @@ import (
 	"os"
 
 	"github.com/rootless-containers/bypass4netns/pkg/api"
-	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 )
 
 type Client interface {
@@ -123,7 +122,7 @@ type BypassManager struct {
 	*client
 }
 
-func (bm *BypassManager) StartBypass(ctx context.Context, spec bypass4netns.BypassSpec) (*bypass4netns.BypassStatus, error) {
+func (bm *BypassManager) StartBypass(ctx context.Context, spec api.BypassSpec) (*api.BypassStatus, error) {
 	m, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
@@ -144,14 +143,14 @@ func (bm *BypassManager) StartBypass(ctx context.Context, spec bypass4netns.Bypa
 		return nil, err
 	}
 	dec := json.NewDecoder(resp.Body)
-	var status bypass4netns.BypassStatus
+	var status api.BypassStatus
 	if err := dec.Decode(&status); err != nil {
 		return nil, err
 	}
 	return &status, nil
 }
 
-func (bm *BypassManager) ListBypass(ctx context.Context) ([]bypass4netns.BypassStatus, error) {
+func (bm *BypassManager) ListBypass(ctx context.Context) ([]api.BypassStatus, error) {
 	u := fmt.Sprintf("http://%s/%s/bypass", bm.client.dummyHost, bm.client.version)
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
@@ -166,7 +165,7 @@ func (bm *BypassManager) ListBypass(ctx context.Context) ([]bypass4netns.BypassS
 	if err := successful(resp); err != nil {
 		return nil, err
 	}
-	var statuses []bypass4netns.BypassStatus
+	var statuses []api.BypassStatus
 	dec := json.NewDecoder(resp.Body)
 	if err := dec.Decode(&statuses); err != nil {
 		return nil, err

@@ -19,13 +19,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-/*
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <seccomp.h>
-*/
-import "C"
-
 func closeStateFds(recvFds []int) {
 	for i := range recvFds {
 		unix.Close(i)
@@ -351,7 +344,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
-		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		flags:      SeccompAddFdFlagSetFd,
 		srcfd:      uint32(sockfd2),
 		newfd:      uint32(ctx.req.Data.Args[0]),
 		newfdFlags: 0,
@@ -365,7 +358,7 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 
 	logger.Infof("binding for %d:%d is done", fwdPort.HostPort, fwdPort.ChildPort)
 
-	ctx.resp.Flags &= (^uint32(C.SECCOMP_USER_NOTIF_FLAG_CONTINUE))
+	ctx.resp.Flags &= (^uint32(SeccompUserNotifFlagContinue))
 }
 
 // handleSysClose handles `close(2)` and delete recorded socket options.
@@ -410,7 +403,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
-		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		flags:      SeccompAddFdFlagSetFd,
 		srcfd:      uint32(sockfd2),
 		newfd:      uint32(ctx.req.Data.Args[0]),
 		newfdFlags: 0,
@@ -503,7 +496,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
-		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		flags:      SeccompAddFdFlagSetFd,
 		srcfd:      uint32(sockfd2),
 		newfd:      uint32(ctx.req.Data.Args[0]),
 		newfdFlags: 0,
@@ -578,7 +571,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 
 	addfd := seccompNotifAddFd{
 		id:         ctx.req.ID,
-		flags:      C.SECCOMP_ADDFD_FLAG_SETFD,
+		flags:      SeccompAddFdFlagSetFd,
 		srcfd:      uint32(sockfd2),
 		newfd:      uint32(ctx.req.Data.Args[0]),
 		newfdFlags: 0,
@@ -612,7 +605,7 @@ func (h *notifHandler) handleReq(ctx *context) {
 	}
 	logrus.Tracef("Received syscall %q, pid %v, arch %q, args %+v", syscallName, ctx.req.Pid, ctx.req.Data.Arch, ctx.req.Data.Args)
 
-	ctx.resp.Flags |= C.SECCOMP_USER_NOTIF_FLAG_CONTINUE
+	ctx.resp.Flags |= SeccompUserNotifFlagContinue
 
 	switch syscallName {
 	case "bind":

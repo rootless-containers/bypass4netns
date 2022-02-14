@@ -9,51 +9,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rootless-containers/bypass4netns/pkg/api"
 	"github.com/sirupsen/logrus"
 )
 
 type Driver struct {
 	BypassExecutablePath string
-	bypass               map[string]BypassStatus
+	bypass               map[string]api.BypassStatus
 	lock                 sync.RWMutex
-}
-
-type BypassStatus struct {
-	ID   string     `json:"id"`
-	Pid  int        `json:"pid"`
-	Spec BypassSpec `json:"spec"`
-}
-
-type BypassSpec struct {
-	ID            string     `json:"id"`
-	SocketPath    string     `json:"socketPath"`
-	PidFilePath   string     `json:"pidFilePath"`
-	LogFilePath   string     `json:"logFilePath"`
-	PortMapping   []PortSpec `json:"portMapping"`
-	IgnoreSubnets []string   `json:"ignoreSubnets"`
-}
-
-type PortSpec struct {
-	Protos     []string `json:"protos"`
-	ParentIP   string   `json:"parentIP"`
-	ParentPort int      `json:"parentPort"`
-	ChildIP    string   `json:"childIP"`
-	ChildPort  int      `json:"childPort"`
 }
 
 func NewDriver(execPath string) *Driver {
 	return &Driver{
 		BypassExecutablePath: execPath,
-		bypass:               map[string]BypassStatus{},
+		bypass:               map[string]api.BypassStatus{},
 		lock:                 sync.RWMutex{},
 	}
 }
 
-func (d *Driver) ListBypass() []BypassStatus {
+func (d *Driver) ListBypass() []api.BypassStatus {
 	d.lock.RLock()
 	defer d.lock.RUnlock()
 
-	res := []BypassStatus{}
+	res := []api.BypassStatus{}
 	for _, v := range d.bypass {
 		res = append(res, v)
 	}
@@ -61,7 +39,7 @@ func (d *Driver) ListBypass() []BypassStatus {
 	return res
 }
 
-func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
+func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(spec.ID)})
 	logger.Info("Starting bypass")
 	b4nnArgs := []string{}
@@ -117,7 +95,7 @@ func (d *Driver) StartBypass(spec *BypassSpec) (*BypassStatus, error) {
 
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	status := BypassStatus{
+	status := api.BypassStatus{
 		ID:   spec.ID,
 		Pid:  b4nnCmd.Process.Pid,
 		Spec: *spec,
