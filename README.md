@@ -38,7 +38,7 @@ sudo make install
 ```
 
 ## Usage
-### with official package (docker|podman|nerdctl)
+### Hard way (docker|podman|nerdctl)
 ```console
 $ bypass4netns --ignore="127.0.0.0/8,10.0.0.0/8" -p="8080:80"
 ```
@@ -50,26 +50,13 @@ $ $DOCKER run -it --rm --security-opt seccomp=$HOME/seccomp.json alpine
 
 `$DOCKER` is either `docker`, `podman`, or `nerdctl`.
 
-### with patched nerdctl(experimental)
+### Easy way (nerdctl)
 
-Experimentally, nerdctl patched for bypass4netns is available at [naoki9911/nerdctl](https://github.com/naoki9911/nerdctl/tree/bypass4netns-dev)
+bypass4netns is experimentally integrated into nerdctl (>= 0.17.0).
 
-To use this, clone patched nerdctl at the same directory of bypass4netns and build.
-```console
-~/bypass4netns$ pwd
-/home/$USER/bypass4netns
-~/bypass4netns$ cd ..
-~$ git clone -b bypass4netns-dev https://github.com/naoki9911/nerdctl
-~$ cd nerdctl
-~/nerdctl$ make
-```
-
-```console
-$ bypass4netnsd
-```
-
-```console
-~/nerdctl$ _output/nerdctl run -it --rm -p 8080:80 --label nerdctl/bypass4netns=true alpine
+```bash
+containerd-rootless-setuptool.sh install-bypass4netnsd
+nerdctl run -it --rm -p 8080:80 --label nerdctl/bypass4netns=true alpine
 ```
 
 ## :warning: Caveats :warning:
@@ -79,7 +66,8 @@ However, it is probably possible to connect to host loopback IPs by exploiting [
 of `struct sockaddr *` pointers.
 
 ## TODOs
-- Accelerate port forwarding (`(docker|podman) run -p`) as well
+- Integration for Docker
+- Integration for Podman
 - Enable to connect to port-fowarded ports from other containers
     - This means that a container with publish option like `-p 8080:80` cannot be connected to port `80` from other containers in the same network namespace
 - Handle protocol specific publish option like `-p 8080:80/udp`.
