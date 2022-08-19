@@ -2,7 +2,7 @@
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-  config.vm.box = "ubuntu/impish64"
+  config.vm.box = "ubuntu/jammy64"
   memory = 4096
   cpus = 2
   config.vm.provider :virtualbox do |v|
@@ -19,8 +19,8 @@ Vagrant.configure("2") do |config|
     #!/bin/bash
     set -eu -o pipefail
 
-    NERDCTL_VERSION="0.17.0-beta.0"
-    ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.15"
+    NERDCTL_VERSION="0.22.2"
+    ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
     echo "===== Prepare ====="
     (
      set -x
