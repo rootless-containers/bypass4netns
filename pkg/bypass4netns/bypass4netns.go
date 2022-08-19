@@ -190,8 +190,10 @@ func duplicateSocketOnHost(pid int, _sockfd int) (int, int, error) {
 		return 0, 0, fmt.Errorf("failed to get socket args %s", err)
 	}
 
-	if sock_domain != syscall.AF_INET {
-		return 0, 0, fmt.Errorf("expected AF_INET, got %d", sock_domain)
+	switch sock_domain {
+	case syscall.AF_INET, syscall.AF_INET6:
+	default:
+		return 0, 0, fmt.Errorf("expected AF_INET or AF_INET6, got %d", sock_domain)
 	}
 
 	// only SOCK_STREAM and SOCK_DGRAM are acceptable.
@@ -207,30 +209,12 @@ func duplicateSocketOnHost(pid int, _sockfd int) (int, int, error) {
 	return sockfd2, sockfd, nil
 }
 
-func readAddrInet4FromProcess(pid uint32, offset uint64, addrlen uint64) (*syscall.RawSockaddrInet4, error) {
+func readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockaddr, error) {
 	buf, err := readProcMem(pid, offset, addrlen)
 	if err != nil {
 		return nil, fmt.Errorf("failed readProcMem pid %v offset 0x%x: %s", pid, offset, err)
 	}
-
-	addr := syscall.RawSockaddr{}
-	reader := bytes.NewReader(buf)
-	err = binary.Read(reader, binary.LittleEndian, &addr)
-	if err != nil {
-		return nil, fmt.Errorf("cannot cast byte array to RawSocksddr: %s", err)
-	}
-
-	if addr.Family != syscall.AF_INET {
-		return nil, fmt.Errorf("not AF_INET addr: %d", addr.Family)
-	}
-	addrInet := syscall.RawSockaddrInet4{}
-	reader.Seek(0, 0)
-	err = binary.Read(reader, binary.LittleEndian, &addrInet)
-	if err != nil {
-		return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet4: %s", err)
-	}
-
-	return &addrInet, nil
+	return newSockaddr(buf)
 }
 
 // manageSocket manages socketStatus and return next injecting file descriptor
@@ -300,19 +284,18 @@ func (h *notifHandler) manageSocket(destAddr net.IP, pid int, sockfd int, logger
 // Then, handler replaces container's socket to created one.
 func (h *notifHandler) handleSysBind(ctx *context) {
 	logger := logrus.WithFields(logrus.Fields{"syscall": "bind", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
-		logger.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read sockaddr from process: %v", err)
 		return
 	}
 
-	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
+	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
 
 	// TODO: get port-fowrad mapping from nerdctl
-	fwdPort, ok := h.forwardingPorts[int(port)]
+	fwdPort, ok := h.forwardingPorts[int(sa.Port)]
 	if !ok {
-		logger.Infof("port=%d is not target of port forwarding.", port)
+		logger.Infof("port=%d is not target of port forwarding.", sa.Port)
 		return
 	}
 
@@ -331,12 +314,31 @@ func (h *notifHandler) handleSysBind(ctx *context) {
 		return
 	}
 
-	bind_addr := syscall.SockaddrInet4{
-		Port: fwdPort.HostPort,
-		Addr: addrInet.Addr,
+	var bind_addr syscall.Sockaddr
+
+	switch sa.Family {
+	case syscall.AF_INET:
+		var addr [4]byte
+		for i := 0; i < 4; i++ {
+			addr[i] = sa.IP[i]
+		}
+		bind_addr = &syscall.SockaddrInet4{
+			Port: fwdPort.HostPort,
+			Addr: addr,
+		}
+	case syscall.AF_INET6:
+		var addr [16]byte
+		for i := 0; i < 16; i++ {
+			addr[i] = sa.IP[i]
+		}
+		bind_addr = &syscall.SockaddrInet6{
+			Port:   fwdPort.HostPort,
+			ZoneId: sa.ScopeID,
+			Addr:   addr,
+		}
 	}
 
-	err = syscall.Bind(sockfd2, &bind_addr)
+	err = syscall.Bind(sockfd2, bind_addr)
 	if err != nil {
 		logger.Errorf("bind failed: %s", err)
 		return
@@ -374,20 +376,16 @@ func (h *notifHandler) handleSysClose(ctx *context) {
 // Then, handler replaces container's socket to created one.
 func (h *notifHandler) handleSysConnect(ctx *context) {
 	logger := logrus.WithFields(logrus.Fields{"syscall": "connect", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
-		logger.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read sockaddr from process: %v", err)
 		return
 	}
 
-	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
-
-	// TODO: more sophisticated way to convert.
-	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
@@ -456,8 +454,10 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 		return
 	}
 
-	if sock_domain != syscall.AF_INET {
-		logger.Debug("only supported AF_INET: %d")
+	switch sock_domain {
+	case syscall.AF_INET, syscall.AF_INET6:
+	default:
+		logger.Debugf("only supported AF_INET, AF_INET6: %d", sock_domain)
 		return
 	}
 
@@ -467,20 +467,16 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 	}
 
 	addrOffset := uint64(msghdr.Name)
-	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, addrOffset, uint64(msghdr.Namelen))
+	sa, err := readSockaddrFromProcess(ctx.req.Pid, addrOffset, uint64(msghdr.Namelen))
 	if err != nil {
-		logger.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read sockaddr from process: %v", err)
 		return
 	}
 
-	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
-
-	// TODO: more sophisticated way to convert.
-	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
@@ -542,20 +538,16 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 		return
 	}
 
-	addrInet, err := readAddrInet4FromProcess(ctx.req.Pid, ctx.req.Data.Args[4], ctx.req.Data.Args[5])
+	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[4], ctx.req.Data.Args[5])
 	if err != nil {
-		logger.Errorf("failed to read addrInet4 from process: %s", err)
+		logger.Errorf("failed to read sockaddr from process: %v", err)
 		return
 	}
 
-	port := ((addrInet.Port & 0xFF) << 8) | (addrInet.Port >> 8)
-	logger.Infof("handle port=%d, ip=%v", port, addrInet.Addr)
-
-	// TODO: more sophisticated way to convert.
-	ipAddr := net.IPv4(addrInet.Addr[0], addrInet.Addr[1], addrInet.Addr[2], addrInet.Addr[3])
+	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
 
 	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(ipAddr, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
 
 	if !cont {
 		return
