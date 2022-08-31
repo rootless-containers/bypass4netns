@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,6 +87,7 @@ func main() {
 	}
 
 	logrus.Infof("SocketPath: %s", socketFile)
+
 	handler := bypass4netns.NewHandler(socketFile)
 
 	subnets := []net.IPNet{}
@@ -129,6 +131,25 @@ func main() {
 			logrus.Fatalf("failed to set readyFd: %s", err)
 		}
 	}
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, unix.SIGTERM, unix.SIGHUP, unix.SIGINT)
+		sig := <-sigCh
+		logrus.Infof("Received signal %v, exiting...", sig)
+		logrus.Infof("Removing socket %q", socketFile)
+		if err := os.RemoveAll(socketFile); err != nil {
+			logrus.Warnf("Failed to remove socket %q", socketFile)
+		}
+		if pidFile != "" {
+			logrus.Infof("Removing pid file %q", pidFile)
+			if err := os.RemoveAll(pidFile); err != nil {
+				logrus.Warnf("Failed to remove pid file %q", pidFile)
+			}
+		}
+		// The log file is not removed here
+		os.Exit(0)
+	}()
 
 	handler.StartHandle()
 }
