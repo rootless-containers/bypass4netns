@@ -11,6 +11,7 @@ import (
 
 	"github.com/rootless-containers/bypass4netns/pkg/api"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 type Driver struct {
@@ -124,16 +125,23 @@ func (d *Driver) StopBypass(id string) error {
 	}
 	logger.Debugf("bypass4netns found pid=%d", proc.Pid)
 
-	err = proc.Kill()
+	logger.Infof("Terminating bypass4netns pid=%d", proc.Pid)
+	err = proc.Signal(unix.SIGTERM)
 	if err != nil {
 		return err
 	}
-	logger.Infof("Killing bypass4netns pid=%d", proc.Pid)
 
 	// wait for the process exit
 	// TODO: Timeout
-	proc.Wait()
-	logger.Infof("Killed bypass4netns pid=%d", proc.Pid)
+	if _, err := proc.Wait(); err != nil {
+		logrus.Warnf("Failed to terminate bypass4netns pid=%d with SIGTERM, killing...", proc.Pid)
+		err = proc.Kill()
+		if err != nil {
+			return err
+		}
+		_, _ = proc.Wait()
+	}
+	logger.Infof("Terminated bypass4netns pid=%d", proc.Pid)
 
 	delete(d.bypass, id)
 	logger.Info("Stopped bypass")
