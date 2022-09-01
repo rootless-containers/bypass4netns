@@ -25,6 +25,7 @@ var (
 	pidFile     string
 	logFilePath string
 	readyFd     int
+	exitFd      int
 )
 
 func main() {
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
+	flag.IntVar(&exitFd, "exit-fd", -1, "File descriptor for terminating bypass4netns")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	debug := flag.Bool("debug", false, "Enable debug mode")
@@ -130,6 +132,24 @@ func main() {
 		if err != nil {
 			logrus.Fatalf("failed to set readyFd: %s", err)
 		}
+	}
+
+	if exitFd >= 0 {
+		exitFile := os.NewFile(uintptr(exitFd), "exit-fd")
+		if exitFile == nil {
+			logrus.Fatalf("invalid exit-fd %d", exitFd)
+		}
+		defer exitFile.Close()
+		go func() {
+			if _, err := io.ReadAll(exitFile); err != nil {
+				logrus.Fatalf("Failed to wait for exit-fd %d to be closed: %v", exitFd, err)
+			}
+			pid := os.Getpid()
+			logrus.Infof("The exit-fd was closed, sending SIGTERM to the process itself (PID %d)", pid)
+			if err := unix.Kill(pid, unix.SIGTERM); err != nil {
+				logrus.Fatalf("Failed to kill(%d, SIGTERM)", pid)
+			}
+		}()
 	}
 
 	go func() {
