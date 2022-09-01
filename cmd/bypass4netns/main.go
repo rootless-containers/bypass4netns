@@ -44,6 +44,7 @@ func main() {
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
+	help := flag.Bool("help", false, "Show help")
 
 	// Parse arguments
 	flag.Parse()
@@ -63,6 +64,11 @@ func main() {
 		fmt.Printf("bypass4netns version %s\n", strings.TrimPrefix(pkgversion.Version, "v"))
 		major, minor, micro := seccomp.GetLibraryVersion()
 		fmt.Printf("libseccomp: %d.%d.%d\n", major, minor, micro)
+		os.Exit(0)
+	}
+
+	if *help {
+		flag.Usage()
 		os.Exit(0)
 	}
 
