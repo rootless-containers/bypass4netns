@@ -44,6 +44,7 @@ func main() {
 	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
+	help := flag.Bool("help", false, "Show help")
 
 	// Parse arguments
 	flag.Parse()
@@ -61,6 +62,11 @@ func main() {
 
 	if *version {
 		fmt.Printf("bypass4netnsd version %s\n", strings.TrimPrefix(pkgversion.Version, "v"))
+		os.Exit(0)
+	}
+
+	if *help {
+		flag.Usage()
 		os.Exit(0)
 	}
 

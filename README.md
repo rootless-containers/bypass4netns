@@ -24,7 +24,7 @@ See also the [talks](#talks).
 
 ## Requirements
 - kernel >= 5.9
-- runc >= 1.1
+- runc >= 1.1, or crun >= 0.19
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
 
