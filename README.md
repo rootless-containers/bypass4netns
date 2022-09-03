@@ -45,8 +45,13 @@ The following binaries will be installed into `/usr/local/bin`:
 ## Usage
 ### Hard way (docker|podman|nerdctl)
 ```console
-$ bypass4netns --ignore="127.0.0.0/8,10.0.0.0/8" -p="8080:80"
+$ bypass4netns --ignore="127.0.0.0/8,10.0.0.0/8,auto" -p="8080:80"
 ```
+
+`--ignore=...` is a list of the CIDRs that cannot be bypassed:
+- loopback CIDRs (`127.0.0.0/8`)
+- slirp4netns CIDR (`10.0.0.0/8`)
+- CNI CIDRs inside the slirp's network namespace (`auto`)
 
 ```console
 $ ./test/seccomp.json.sh >$HOME/seccomp.json
