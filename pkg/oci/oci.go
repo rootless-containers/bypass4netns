@@ -34,8 +34,26 @@ func TranslateSeccompProfile(old specs.LinuxSeccomp, listenerPath string) (*spec
 		Names:  SyscallsToBeNotified,
 		Action: specs.ActNotify,
 	}
-	if alreadyPrepended := len(sc.Syscalls) > 0 && reflect.DeepEqual(sc.Syscalls[0], sc.ListenerPath); !alreadyPrepended {
+	if alreadyPrepended := len(sc.Syscalls) > 0 && reflect.DeepEqual(sc.Syscalls[0], prepend); !alreadyPrepended {
+		for i := range sc.Syscalls {
+			i := i
+			sc.Syscalls[i].Names = filterStringSlice(sc.Syscalls[i].Names, SyscallsToBeNotified)
+		}
 		sc.Syscalls = append([]specs.LinuxSyscall{prepend}, sc.Syscalls...)
 	}
 	return &sc, nil
+}
+
+func filterStringSlice(ss, banned []string) []string {
+	bannedM := make(map[string]struct{}, len(banned))
+	for _, f := range banned {
+		bannedM[f] = struct{}{}
+	}
+	var res []string
+	for _, s := range ss {
+		if _, ok := bannedM[s]; !ok {
+			res = append(res, s)
+		}
+	}
+	return res
 }
