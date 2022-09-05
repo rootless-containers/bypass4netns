@@ -453,7 +453,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logger.Error("failed to get socket args: %s", err)
+		logger.Errorf("failed to get socket args: %v", err)
 		return
 	}
 
@@ -529,12 +529,12 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logger.Error("failed to get socket args: %s", err)
+		logger.Errorf("failed to get socket args: %v", err)
 		return
 	}
 
 	if sock_domain != syscall.AF_INET {
-		logger.Debug("only supported AF_INET: %d")
+		logger.Debugf("only supported AF_INET: %d", sock_domain)
 		return
 	}
 
@@ -633,7 +633,7 @@ func (h *notifHandler) handle() {
 	if h.nonBypassableAutoUpdate {
 		go func() {
 			if nbErr := h.nonBypassable.WatchNS(gocontext.TODO(), h.state.Pid); nbErr != nil {
-				logrus.WithError(nbErr).Fatal("failed to watch NS (PID=%d)", h.state.Pid)
+				logrus.WithError(nbErr).Fatalf("failed to watch NS (PID=%d)", h.state.Pid)
 			}
 		}()
 	}
@@ -764,7 +764,7 @@ func (h *Handler) StartHandle() {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
-		logrus.Fatalf("Cannot listen: %w", err)
+		logrus.Fatalf("Cannot listen: %v", err)
 	}
 	defer l.Close()
 

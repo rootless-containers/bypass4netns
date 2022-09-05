@@ -38,7 +38,7 @@ func (b *Backend) GetBypasses(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(m)
+	_, _ = w.Write(m)
 }
 
 func (b *Backend) PostBypass(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +60,7 @@ func (b *Backend) PostBypass(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write(m)
+	_, _ = w.Write(m)
 }
 
 func (b *Backend) DeleteBypass(w http.ResponseWriter, r *http.Request) {

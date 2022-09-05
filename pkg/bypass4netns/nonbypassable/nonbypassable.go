@@ -90,7 +90,7 @@ func (x *NonBypassable) WatchNS(ctx context.Context, pid int) error {
 	signal.Notify(sigCh, unix.SIGHUP)
 	for sig := range sigCh {
 		if uSig, ok := sig.(unix.Signal); ok {
-			unix.Kill(cmdPid, uSig)
+			_ = unix.Kill(cmdPid, uSig)
 		}
 	}
 	return nil

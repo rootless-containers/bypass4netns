@@ -27,12 +27,14 @@ func newSockaddr(buf []byte) (*sockaddr, error) {
 	switch sa.Family {
 	case syscall.AF_INET:
 		addr4 := syscall.RawSockaddrInet4{}
-		reader.Seek(0, 0)
+		if _, err := reader.Seek(0, 0); err != nil {
+			return nil, err
+		}
 		if err := binary.Read(reader, endian, &addr4); err != nil {
 			return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet4: %w", err)
 		}
 		sa.IP = make(net.IP, len(addr4.Addr))
-		for i, x := range addr4.Addr {
+		for i, x := range addr4.Addr { // nolint: gosimple
 			sa.IP[i] = x
 		}
 		p := make([]byte, 2)
@@ -40,12 +42,14 @@ func newSockaddr(buf []byte) (*sockaddr, error) {
 		sa.Port = int(endian.Uint16(p))
 	case syscall.AF_INET6:
 		addr6 := syscall.RawSockaddrInet6{}
-		reader.Seek(0, 0)
+		if _, err := reader.Seek(0, 0); err != nil {
+			return nil, err
+		}
 		if err := binary.Read(reader, endian, &addr6); err != nil {
 			return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet6: %w", err)
 		}
 		sa.IP = make(net.IP, len(addr6.Addr))
-		for i, x := range addr6.Addr {
+		for i, x := range addr6.Addr { // nolint: gosimple
 			sa.IP[i] = x
 		}
 		p := make([]byte, 2)
