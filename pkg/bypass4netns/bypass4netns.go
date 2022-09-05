@@ -392,6 +392,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 	if !cont {
 		return
 	}
+	defer syscall.Close(sockfd2)
 
 	// configure socket if switched
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
@@ -479,6 +480,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 
 	// Retrieve next injecting file descriptor
 	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	defer syscall.Close(sockfd2)
 
 	if !cont {
 		return
@@ -523,6 +525,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 	if err != nil {
 		logger.Errorf("failed to get fd: %s", err)
 	}
+	defer syscall.Close(sockfd)
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
@@ -550,6 +553,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 
 	// Retrieve next injecting file descriptor
 	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	defer syscall.Close(sockfd2)
 
 	if !cont {
 		return

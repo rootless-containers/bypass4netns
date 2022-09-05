@@ -98,7 +98,7 @@ func (info *socketInfo) deleteSocket(ctx *context, logger *logrus.Entry) {
 	status, ok := info.status[key]
 	if ok {
 		delete(info.status, key)
-		syscall.Close(status.fdInHost)
+		syscall.Close(status.fdInNetns)
 		syscall.Close(status.fdInHost)
 		logger.Debugf("removed socket status(fdInNetns=%d fdInHost=%d)", status.fdInNetns, status.fdInHost)
 	}
