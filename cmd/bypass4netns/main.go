@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nsagent"
 	"github.com/rootless-containers/bypass4netns/pkg/oci"
 	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
 	seccomp "github.com/seccomp/libseccomp-golang"
@@ -40,11 +41,12 @@ func main() {
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
 	flag.IntVar(&exitFd, "exit-fd", -1, "File descriptor for terminating bypass4netns")
-	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns")
+	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns. Can be also set to \"auto\".")
 	fowardPorts := flag.StringArrayP("publish", "p", []string{}, "Publish a container's port(s) to the host")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
 	help := flag.Bool("help", false, "Show help")
+	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)") // TODO: hide
 
 	// Parse arguments
 	flag.Parse()
@@ -69,6 +71,13 @@ func main() {
 
 	if *help {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	if *nsagentFlag {
+		if err := nsagent.Main(); err != nil {
+			logrus.Fatal(err)
+		}
 		os.Exit(0)
 	}
 
@@ -99,15 +108,25 @@ func main() {
 	handler := bypass4netns.NewHandler(socketFile)
 
 	subnets := []net.IPNet{}
+	var subnetsAuto bool
 	for _, subnetStr := range *ignoredSubnets {
-		_, subnet, err := net.ParseCIDR(subnetStr)
-		if err != nil {
-			logrus.Fatalf("%s is not CIDR format", subnetStr)
+		switch subnetStr {
+		case "auto":
+			if subnetsAuto {
+				logrus.Warn("--ignore=\"auto\" appeared multiple times")
+			}
+			subnetsAuto = true
+			logrus.Info("Enabling auto-update for --ignore")
+		default:
+			_, subnet, err := net.ParseCIDR(subnetStr)
+			if err != nil {
+				logrus.Fatalf("%s is not CIDR format", subnetStr)
+			}
+			subnets = append(subnets, *subnet)
+			logrus.Infof("%s is added to ignore", subnet)
 		}
-		subnets = append(subnets, *subnet)
-		logrus.Infof("%s is added to ignore", subnet)
 	}
-	handler.SetIgnoredSubnets(subnets)
+	handler.SetIgnoredSubnets(subnets, subnetsAuto)
 
 	for _, forwardPortStr := range *fowardPorts {
 		ports := strings.Split(forwardPortStr, ":")
@@ -160,7 +179,7 @@ func main() {
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, unix.SIGTERM, unix.SIGHUP, unix.SIGINT)
+		signal.Notify(sigCh, unix.SIGTERM, unix.SIGINT) // SIGHUP is propagated to nsagents for reloading
 		sig := <-sigCh
 		logrus.Infof("Received signal %v, exiting...", sig)
 		logrus.Infof("Removing socket %q", socketFile)

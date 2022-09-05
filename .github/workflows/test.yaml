@@ -6,7 +6,23 @@ on:
       - 'release/**'
   pull_request:
 jobs:
-  ubuntu-2110:
+  golangci-lint:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v3.0.2
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19.x
+      - run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3.2.0
+        with:
+          version: v1.49.0
+          args: --verbose
+  ubuntu-2204:
     name: "Ubuntu 22.04"
     # nested virtualization is only available on macOS hosts
     runs-on: macos-12

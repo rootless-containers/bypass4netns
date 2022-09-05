@@ -119,7 +119,5 @@ func listenServeAPI(socketPath string, backend *router.Backend) error {
 		return err
 	}
 	logrus.Infof("Starting to serve on %s", socketPath)
-	srv.Serve(l)
-
-	return nil
+	return srv.Serve(l)
 }

@@ -5,6 +5,7 @@ package bypass4netns
 
 import (
 	"bytes"
+	gocontext "context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -85,7 +87,7 @@ func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
 	return buffer[:size], nil
 }
 
-func handleNewMessage(sockfd int) (uintptr, string, error) {
+func handleNewMessage(sockfd int) (uintptr, *specs.ContainerProcessState, error) {
 	const maxNameLen = 4096
 	stateBuf := make([]byte, maxNameLen)
 	oobSpace := unix.CmsgSpace(4)
@@ -93,10 +95,10 @@ func handleNewMessage(sockfd int) (uintptr, string, error) {
 
 	n, oobn, _, _, err := unix.Recvmsg(sockfd, stateBuf, oob, 0)
 	if err != nil {
-		return 0, "", err
+		return 0, nil, err
 	}
 	if n >= maxNameLen || oobn != oobSpace {
-		return 0, "", fmt.Errorf("recvfd: incorrect number of bytes read (n=%d oobn=%d)", n, oobn)
+		return 0, nil, fmt.Errorf("recvfd: incorrect number of bytes read (n=%d oobn=%d)", n, oobn)
 	}
 
 	// Truncate.
@@ -105,32 +107,32 @@ func handleNewMessage(sockfd int) (uintptr, string, error) {
 
 	scms, err := unix.ParseSocketControlMessage(oob)
 	if err != nil {
-		return 0, "", err
+		return 0, nil, err
 	}
 	if len(scms) != 1 {
-		return 0, "", fmt.Errorf("recvfd: number of SCMs is not 1: %d", len(scms))
+		return 0, nil, fmt.Errorf("recvfd: number of SCMs is not 1: %d", len(scms))
 	}
 	scm := scms[0]
 
 	fds, err := unix.ParseUnixRights(&scm)
 	if err != nil {
-		return 0, "", err
+		return 0, nil, err
 	}
 
 	containerProcessState := &specs.ContainerProcessState{}
 	err = json.Unmarshal(stateBuf, containerProcessState)
 	if err != nil {
 		closeStateFds(fds)
-		return 0, "", fmt.Errorf("cannot parse OCI state: %w", err)
+		return 0, nil, fmt.Errorf("cannot parse OCI state: %w", err)
 	}
 
 	fd, err := parseStateFds(containerProcessState.Fds, fds)
 	if err != nil {
 		closeStateFds(fds)
-		return 0, "", err
+		return 0, nil, err
 	}
 
-	return fd, containerProcessState.Metadata, nil
+	return fd, containerProcessState, nil
 }
 
 type context struct {
@@ -220,7 +222,7 @@ func readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockad
 // manageSocket manages socketStatus and return next injecting file descriptor
 // return values are (continue?, injecting fd)
 func (h *notifHandler) manageSocket(destAddr net.IP, pid int, sockfd int, logger *logrus.Entry) (bool, int) {
-	destIsIgnored := h.isIgnored(destAddr)
+	destIsIgnored := h.nonBypassable.Contains(destAddr)
 	key := fmt.Sprintf("%d:%d", pid, sockfd)
 	sockStatus, ok := h.socketInfo.status[key]
 	if !ok {
@@ -390,6 +392,7 @@ func (h *notifHandler) handleSysConnect(ctx *context) {
 	if !cont {
 		return
 	}
+	defer syscall.Close(sockfd2)
 
 	// configure socket if switched
 	err = h.socketInfo.configureSocket(ctx, sockfd2)
@@ -450,7 +453,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logger.Error("failed to get socket args: %s", err)
+		logger.Errorf("failed to get socket args: %v", err)
 		return
 	}
 
@@ -477,6 +480,7 @@ func (h *notifHandler) handleSysSendmsg(ctx *context) {
 
 	// Retrieve next injecting file descriptor
 	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	defer syscall.Close(sockfd2)
 
 	if !cont {
 		return
@@ -521,15 +525,16 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 	if err != nil {
 		logger.Errorf("failed to get fd: %s", err)
 	}
+	defer syscall.Close(sockfd)
 	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
 
 	if err != nil {
-		logger.Error("failed to get socket args: %s", err)
+		logger.Errorf("failed to get socket args: %v", err)
 		return
 	}
 
 	if sock_domain != syscall.AF_INET {
-		logger.Debug("only supported AF_INET: %d")
+		logger.Debugf("only supported AF_INET: %d", sock_domain)
 		return
 	}
 
@@ -548,6 +553,7 @@ func (h *notifHandler) handleSysSendto(ctx *context) {
 
 	// Retrieve next injecting file descriptor
 	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
+	defer syscall.Close(sockfd2)
 
 	if !cont {
 		return
@@ -624,6 +630,13 @@ func (h *notifHandler) handleReq(ctx *context) {
 // notifHandler handles seccomp notifications and response to them.
 func (h *notifHandler) handle() {
 	defer unix.Close(int(h.fd))
+	if h.nonBypassableAutoUpdate {
+		go func() {
+			if nbErr := h.nonBypassable.WatchNS(gocontext.TODO(), h.state.Pid); nbErr != nil {
+				logrus.WithError(nbErr).Fatalf("failed to watch NS (PID=%d)", h.state.Pid)
+			}
+		}()
+	}
 
 	for {
 		req, err := libseccomp.NotifReceive(h.fd)
@@ -664,9 +677,10 @@ type ForwardPortMapping struct {
 }
 
 type Handler struct {
-	socketPath     string
-	ignoredSubnets []net.IPNet
-	readyFd        int
+	socketPath               string
+	ignoredSubnets           []net.IPNet
+	ignoredSubnetsAutoUpdate bool
+	readyFd                  int
 
 	// key is child port
 	forwardingPorts map[int]ForwardPortMapping
@@ -685,8 +699,9 @@ func NewHandler(socketPath string) *Handler {
 }
 
 // SetIgnoreSubnets configures subnets to ignore in bypass4netns.
-func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet) {
+func (h *Handler) SetIgnoredSubnets(subnets []net.IPNet, autoUpdate bool) {
 	h.ignoredSubnets = subnets
+	h.ignoredSubnetsAutoUpdate = autoUpdate
 }
 
 // SetForwardingPort checks and configures port forwarding
@@ -715,24 +730,26 @@ func (h *Handler) SetReadyFd(fd int) error {
 }
 
 type notifHandler struct {
-	fd              libseccomp.ScmpFd
-	ignoredSubnets  []net.IPNet
-	forwardingPorts map[int]ForwardPortMapping
-	socketInfo      socketInfo
+	fd                      libseccomp.ScmpFd
+	state                   *specs.ContainerProcessState
+	nonBypassable           *nonbypassable.NonBypassable
+	nonBypassableAutoUpdate bool
+	forwardingPorts         map[int]ForwardPortMapping
+	socketInfo              socketInfo
 }
 
-func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
+func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
 	notifHandler := notifHandler{
 		fd:              libseccomp.ScmpFd(fd),
+		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
 		socketInfo: socketInfo{
 			options: map[string][]socketOption{},
 			status:  map[string]socketStatus{},
 		},
 	}
-	notifHandler.ignoredSubnets = make([]net.IPNet, len(h.ignoredSubnets))
-	// Deep copy []net.IPNet because each thread accesses it.
-	copy(notifHandler.ignoredSubnets, h.ignoredSubnets)
+	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
+	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate
 
 	// Deep copy of map
 	for key, value := range h.forwardingPorts {
@@ -742,23 +759,12 @@ func (h *Handler) newNotifHandler(fd uintptr) *notifHandler {
 	return &notifHandler
 }
 
-// isIgnored checks the IP address is ignored.
-func (h *notifHandler) isIgnored(ip net.IP) bool {
-	for _, subnet := range h.ignoredSubnets {
-		if subnet.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // StartHandle starts seccomp notif handler
 func (h *Handler) StartHandle() {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
-		logrus.Fatalf("Cannot listen: %w", err)
+		logrus.Fatalf("Cannot listen: %v", err)
 	}
 	defer l.Close()
 
@@ -784,7 +790,7 @@ func (h *Handler) StartHandle() {
 			logrus.Errorf("Cannot get socket: %v", err)
 			continue
 		}
-		newFd, _, err := handleNewMessage(int(socket.Fd()))
+		newFd, state, err := handleNewMessage(int(socket.Fd()))
 		socket.Close()
 		if err != nil {
 			logrus.Errorf("Error receiving seccomp file descriptor: %v", err)
@@ -792,7 +798,7 @@ func (h *Handler) StartHandle() {
 		}
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
-		notifHandler := h.newNotifHandler(newFd)
+		notifHandler := h.newNotifHandler(newFd, state)
 		go notifHandler.handle()
 	}
 }
