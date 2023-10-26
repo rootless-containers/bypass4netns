@@ -593,6 +593,21 @@ func (h *notifHandler) handleSysSetsockopt(ctx *context) {
 	}
 }
 
+func (h *notifHandler) handleSysFcntl(ctx *context) {
+	logger := logrus.WithFields(logrus.Fields{"syscall": "fcntl", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
+	logger.Debugf("handle")
+	fcntlCmd := ctx.req.Data.Args[1]
+	switch fcntlCmd {
+	case unix.F_SETFD: // 0x2
+	case unix.F_SETFL: // 0x4
+		h.socketInfo.recordFcntl(ctx, logger)
+	case unix.F_GETFL: // 0x3
+		// ignore these
+	default:
+		logger.Warnf("Unknown fcntl command 0x%x ignored.", fcntlCmd)
+	}
+}
+
 // handleReq handles seccomp notif requests and configures responses.
 func (h *notifHandler) handleReq(ctx *context) {
 	syscallName, err := ctx.req.Data.Syscall.GetName()
@@ -619,6 +634,8 @@ func (h *notifHandler) handleReq(ctx *context) {
 		h.handleSysSendto(ctx)
 	case "setsockopt":
 		h.handleSysSetsockopt(ctx)
+	case "fcntl":
+		h.handleSysFcntl(ctx)
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
@@ -744,8 +761,9 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
 		socketInfo: socketInfo{
-			options: map[string][]socketOption{},
-			status:  map[string]socketStatus{},
+			options:      map[string][]socketOption{},
+			fcntlOptions: map[string][]fcntlOption{},
+			status:       map[string]socketStatus{},
 		},
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
