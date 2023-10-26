@@ -45,6 +45,10 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	logger.Info("Starting bypass")
 	b4nnArgs := []string{}
 
+	if logger.Logger.GetLevel() == logrus.DebugLevel {
+		b4nnArgs = append(b4nnArgs, "--debug")
+	}
+
 	if spec.SocketPath != "" {
 		socketOption := fmt.Sprintf("--socket=%s", spec.SocketPath)
 		b4nnArgs = append(b4nnArgs, socketOption)
