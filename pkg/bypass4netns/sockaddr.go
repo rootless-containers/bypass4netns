@@ -16,6 +16,10 @@ type sockaddr struct {
 	ScopeID  uint32 // sin6_scope_id
 }
 
+func (sa *sockaddr) String() string {
+	return fmt.Sprintf("%s:%d", sa.IP, sa.Port)
+}
+
 func newSockaddr(buf []byte) (*sockaddr, error) {
 	sa := &sockaddr{}
 	reader := bytes.NewReader(buf)
@@ -34,9 +38,7 @@ func newSockaddr(buf []byte) (*sockaddr, error) {
 			return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet4: %w", err)
 		}
 		sa.IP = make(net.IP, len(addr4.Addr))
-		for i, x := range addr4.Addr { // nolint: gosimple
-			sa.IP[i] = x
-		}
+		copy(sa.IP, addr4.Addr[:])
 		p := make([]byte, 2)
 		binary.BigEndian.PutUint16(p, addr4.Port)
 		sa.Port = int(endian.Uint16(p))
@@ -49,9 +51,7 @@ func newSockaddr(buf []byte) (*sockaddr, error) {
 			return nil, fmt.Errorf("cannot cast byte array to RawSockaddrInet6: %w", err)
 		}
 		sa.IP = make(net.IP, len(addr6.Addr))
-		for i, x := range addr6.Addr { // nolint: gosimple
-			sa.IP[i] = x
-		}
+		copy(sa.IP, addr6.Addr[:])
 		p := make([]byte, 2)
 		binary.BigEndian.PutUint16(p, addr6.Port)
 		sa.Port = int(endian.Uint16(p))
