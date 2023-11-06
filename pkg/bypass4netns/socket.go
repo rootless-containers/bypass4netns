@@ -1,7 +1,9 @@
 package bypass4netns
 
 import (
+	"encoding/binary"
 	"fmt"
+	"net"
 	"syscall"
 	"unsafe"
 
@@ -34,10 +36,8 @@ const (
 	// Bypassed means that the socket is replaced by one created on the host
 	Bypassed
 
-	// SwitchBacked means that the socket was bypassed but now rereplaced to the socket in netns.
-	// This state can be hannpend in connect(2), sendto(2) and sendmsg(2)
-	// when connecting to a host outside of netns and then connecting to a host inside of netns with same fd.
-	//SwitchBacked
+	// Error happened after bypass. Nothing can be done to recover from this state.
+	Error
 )
 
 func (ss socketState) String() string {
@@ -48,8 +48,8 @@ func (ss socketState) String() string {
 		return "NotBypassed"
 	case Bypassed:
 		return "Bypassed"
-	//case SwitchBacked:
-	//	return "SwitchBacked"
+	case Error:
+		return "Error"
 	default:
 		panic(fmt.Sprintf("unexpected enum %d: String() is not implmented", ss))
 	}
@@ -143,8 +143,22 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	}
 	ss.addr = destAddr
 
+	// check wheter the destination is bypassed or not.
+	connectToLoopback := false
+	connectToInterface := false
+	fwdPort, ok := handler.forwardingPorts[int(destAddr.Port)]
+	if ok {
+		if destAddr.IP.IsLoopback() {
+			ss.logger.Infof("destination address %v is loopback and bypassed", destAddr)
+			connectToLoopback = true
+		} else if handler.nonBypassable.IsInterfaceIPAddress(destAddr.IP) {
+			ss.logger.Infof("destination address %v is interface's address and bypassed", destAddr)
+			connectToInterface = true
+		}
+	}
+
 	isNotBypassed := handler.nonBypassable.Contains(destAddr.IP)
-	if isNotBypassed {
+	if !connectToLoopback && !connectToInterface && isNotBypassed {
 		ss.logger.Infof("destination address %v is not bypassed.", destAddr.IP)
 		ss.state = NotBypassable
 		return
@@ -178,6 +192,47 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		ss.logger.Errorf("ioctl NotifAddFd failed: %q", err)
 		ss.state = NotBypassable
 		return
+	}
+
+	if connectToLoopback || connectToInterface {
+		p := make([]byte, 2)
+		binary.BigEndian.PutUint16(p, uint16(fwdPort.HostPort))
+		// writing host port at sock_addr's port offset
+		// TODO: should we return dummy value when getpeername(2) is called?
+		err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+2, p)
+		if err != nil {
+			ss.logger.Errorf("failed to rewrite destination port: %q", err)
+			ss.state = Error
+			return
+		}
+		ss.logger.Infof("destination's port %d is rewritten to host-side port %d", ss.addr.Port, fwdPort.HostPort)
+	}
+
+	if connectToInterface {
+		var addr net.IP
+		// writing host's loopback address to connect to bypassed socket at sock_addr's address offset
+		// TODO: should we return dummy value when getpeername(2) is called?
+		switch destAddr.Family {
+		case syscall.AF_INET:
+			// create loopback address "127.0.0.1"
+			addr = net.IPv4zero
+			addr[0] = 127
+			addr[4] = 1
+			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, addr[0:4])
+		case syscall.AF_INET6:
+			addr = net.IPv6loopback
+			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, addr[0:16])
+		default:
+			ss.logger.Errorf("unexpected destination address family %d", destAddr.Family)
+			ss.state = Error
+			return
+		}
+		if err != nil {
+			ss.logger.Errorf("failed to rewrite destination address: %q", err)
+			ss.state = Error
+			return
+		}
+		ss.logger.Infof("destination address %s is rewritten to host loopback address %s", destAddr.IP, addr)
 	}
 
 	ss.state = Bypassed

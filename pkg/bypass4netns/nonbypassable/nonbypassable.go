@@ -31,6 +31,7 @@ func New(staticList []net.IPNet) *NonBypassable {
 type NonBypassable struct {
 	staticList  []net.IPNet
 	dynamicList []net.IPNet
+	intefaceIPs []net.IP
 	mu          sync.RWMutex
 }
 
@@ -42,6 +43,18 @@ func (x *NonBypassable) Contains(ip net.IP) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func (x *NonBypassable) IsInterfaceIPAddress(ip net.IP) bool {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	for _, intfIP := range x.intefaceIPs {
+		if intfIP.Equal(ip) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -106,9 +119,10 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 			continue
 		}
 		var newList []net.IPNet
+		var newInterfaceIPs []net.IP
 		for _, intf := range msg.Interfaces {
 			for _, cidr := range intf.CIDRs {
-				_, ipNet, err := net.ParseCIDR(cidr)
+				ip, ipNet, err := net.ParseCIDR(cidr)
 				if err != nil {
 					logrus.WithError(err).Warnf("Dynamic non-bypassable list: Failed to parse nsagent message %q: %q: bad CIDR %q", line, intf.Name, cidr)
 					continue
@@ -116,11 +130,16 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 				if ipNet != nil {
 					newList = append(newList, *ipNet)
 				}
+				if !ip.IsLoopback() {
+					newInterfaceIPs = append(newInterfaceIPs, ip)
+				}
 			}
 		}
 		x.mu.Lock()
 		logrus.Infof("Dynamic non-bypassable list: old dynamic=%v, new dynamic=%v, static=%v", x.dynamicList, newList, x.staticList)
+		logrus.Infof("Interface's IP address list: %v", newInterfaceIPs)
 		x.dynamicList = newList
+		x.intefaceIPs = newInterfaceIPs
 		x.mu.Unlock()
 	}
 	if err := scanner.Err(); err != nil {

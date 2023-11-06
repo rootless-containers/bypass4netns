@@ -85,6 +85,25 @@ func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
 	return buffer[:size], nil
 }
 
+// writeProcMem writes data to memory of specified pid process at the specified offset.
+func writeProcMem(pid uint32, offset uint64, buf []byte) error {
+	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_WRONLY, 0o777)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(memfd)
+
+	size, err := unix.Pwrite(memfd, buf, int64(offset))
+	if err != nil {
+		return err
+	}
+	if len(buf) != size {
+		return fmt.Errorf("data is not written successfully. expected size=%d actual size=%d", len(buf), size)
+	}
+
+	return nil
+}
+
 func handleNewMessage(sockfd int) (uintptr, *specs.ContainerProcessState, error) {
 	const maxNameLen = 4096
 	stateBuf := make([]byte, maxNameLen)
