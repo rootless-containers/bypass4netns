@@ -13,7 +13,9 @@ import (
 	"os/signal"
 	"strconv"
 	"sync"
+	"time"
 
+	"github.com/rootless-containers/bypass4netns/pkg/api/com"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nsagent/types"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -29,10 +31,11 @@ func New(staticList []net.IPNet) *NonBypassable {
 // NonBypassable maintains the list of the non-bypassable CIDRs,
 // such as 127.0.0.0/8 and CNI bridge CIDRs in the slirp's network namespace.
 type NonBypassable struct {
-	staticList  []net.IPNet
-	dynamicList []net.IPNet
-	intefaceIPs []net.IP
-	mu          sync.RWMutex
+	staticList     []net.IPNet
+	dynamicList    []net.IPNet
+	interfaces     []com.Interface
+	lastUpdateUnix int64
+	mu             sync.RWMutex
 }
 
 func (x *NonBypassable) Contains(ip net.IP) bool {
@@ -49,13 +52,28 @@ func (x *NonBypassable) Contains(ip net.IP) bool {
 func (x *NonBypassable) IsInterfaceIPAddress(ip net.IP) bool {
 	x.mu.RLock()
 	defer x.mu.RUnlock()
-	for _, intfIP := range x.intefaceIPs {
-		if intfIP.Equal(ip) {
-			return true
+	for _, intf := range x.interfaces {
+		for _, intfIP := range intf.Addresses {
+			if intfIP.IP.Equal(ip) {
+				return true
+			}
 		}
 	}
 
 	return false
+}
+
+func (x *NonBypassable) GetInterfaces() []com.Interface {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	ips := append([]com.Interface{}, x.interfaces...)
+	return ips
+}
+
+func (x *NonBypassable) GetLastUpdateUnix() int64 {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	return x.lastUpdateUnix
 }
 
 // WatchNS watches the NS associated with the PID and updates the internal dynamic list on receiving SIGHUP.
@@ -119,8 +137,13 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 			continue
 		}
 		var newList []net.IPNet
-		var newInterfaceIPs []net.IP
+		var newInterfaces []com.Interface
 		for _, intf := range msg.Interfaces {
+			i := com.Interface{
+				Name:       intf.Name,
+				Addresses:  make([]net.IPNet, 0),
+				IsLoopback: false,
+			}
 			for _, cidr := range intf.CIDRs {
 				ip, ipNet, err := net.ParseCIDR(cidr)
 				if err != nil {
@@ -130,16 +153,30 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 				if ipNet != nil {
 					newList = append(newList, *ipNet)
 				}
-				if !ip.IsLoopback() {
-					newInterfaceIPs = append(newInterfaceIPs, ip)
+				if ip.IsLoopback() {
+					i.IsLoopback = true
+				}
+				ifIPNet := net.IPNet{
+					IP:   ip,
+					Mask: ipNet.Mask,
+				}
+				i.Addresses = append(i.Addresses, ifIPNet)
+			}
+			if !i.IsLoopback {
+				var err error
+				i.HWAddr, err = net.ParseMAC(intf.HWAddr)
+				if err != nil {
+					logrus.WithError(err).Errorf("invalid hardware address %q ifName=%s is ignored", intf.HWAddr, intf.Name)
 				}
 			}
+			newInterfaces = append(newInterfaces, i)
 		}
 		x.mu.Lock()
 		logrus.Infof("Dynamic non-bypassable list: old dynamic=%v, new dynamic=%v, static=%v", x.dynamicList, newList, x.staticList)
-		logrus.Infof("Interface's IP address list: %v", newInterfaceIPs)
+		logrus.Infof("Interface list: %v", newInterfaces)
 		x.dynamicList = newList
-		x.intefaceIPs = newInterfaceIPs
+		x.interfaces = newInterfaces
+		x.lastUpdateUnix = time.Now().Unix()
 		x.mu.Unlock()
 	}
 	if err := scanner.Err(); err != nil {

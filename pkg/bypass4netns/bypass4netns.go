@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"net"
 	"syscall"
+	"time"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
+	"github.com/rootless-containers/bypass4netns/pkg/api/com"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
@@ -382,6 +384,7 @@ type ForwardPortMapping struct {
 
 type Handler struct {
 	socketPath               string
+	comSocketPath            string
 	ignoredSubnets           []net.IPNet
 	ignoredSubnetsAutoUpdate bool
 	readyFd                  int
@@ -391,9 +394,10 @@ type Handler struct {
 }
 
 // NewHandler creates new seccomp notif handler
-func NewHandler(socketPath string) *Handler {
+func NewHandler(socketPath, comSocketPath string) *Handler {
 	handler := Handler{
 		socketPath:      socketPath,
+		comSocketPath:   comSocketPath,
 		ignoredSubnets:  []net.IPNet{},
 		forwardingPorts: map[int]ForwardPortMapping{},
 		readyFd:         -1,
@@ -442,6 +446,9 @@ type notifHandler struct {
 
 	// key is pid
 	processes map[uint32]*processStatus
+
+	// key is container ID
+	containerInterfaces map[string]com.ContainerInterfaces
 }
 
 func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
@@ -503,5 +510,48 @@ func (h *Handler) StartHandle() {
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
 		go notifHandler.handle()
+		go notifHandler.startBackgroundTask(h.comSocketPath)
+	}
+}
+
+func (h *notifHandler) startBackgroundTask(comSocketPath string) {
+	logrus.Info("Started bypass4netns background task")
+	comClient, err := com.NewComClient(comSocketPath)
+	if err != nil {
+		logrus.Fatalf("failed to create ComClient: %q", err)
+	}
+	err = comClient.Ping(gocontext.TODO())
+	if err != nil {
+		logrus.Fatalf("failed to connect to bypass4netnsd: %q", err)
+	}
+	logrus.Infof("Successfully connected to bypass4netnsd")
+	ifLastUpdateUnix := int64(0)
+	for {
+		lastUpdated := h.nonBypassable.GetLastUpdateUnix()
+		if lastUpdated > ifLastUpdateUnix {
+			ifs := h.nonBypassable.GetInterfaces()
+			containerIfs := &com.ContainerInterfaces{
+				ContainerID:     h.state.State.ID,
+				Interfaces:      ifs,
+				ForwardingPorts: map[int]int{},
+			}
+			for _, v := range h.forwardingPorts {
+				containerIfs.ForwardingPorts[v.ChildPort] = v.HostPort
+			}
+			logrus.Infof("Interfaces = %v", containerIfs)
+			_, err = comClient.PostInterface(gocontext.TODO(), containerIfs)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to post interfaces")
+			} else {
+				logrus.Infof("successfully posted updated interfaces")
+				ifLastUpdateUnix = lastUpdated
+			}
+		}
+		h.containerInterfaces, err = comClient.ListInterfaces(gocontext.TODO())
+		if err != nil {
+			logrus.WithError(err).Warn("failed to list container interfaces")
+		}
+
+		time.Sleep(1 * time.Second)
 	}
 }

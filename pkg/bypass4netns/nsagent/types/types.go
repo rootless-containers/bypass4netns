@@ -5,6 +5,7 @@ type Message struct {
 }
 
 type Interface struct {
-	Name  string   `json:"name"`  // "lo", "eth0", etc.
-	CIDRs []string `json:"cidrs"` // sorted as strings
+	Name   string   `json:"name"` // "lo", "eth0", etc.
+	HWAddr string   `json:"hwAddr"`
+	CIDRs  []string `json:"cidrs"` // sorted as strings
 }

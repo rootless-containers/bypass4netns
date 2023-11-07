@@ -22,11 +22,12 @@ import (
 )
 
 var (
-	socketFile  string
-	pidFile     string
-	logFilePath string
-	readyFd     int
-	exitFd      int
+	socketFile    string
+	comSocketFile string
+	pidFile       string
+	logFilePath   string
+	readyFd       int
+	exitFd        int
 )
 
 func main() {
@@ -37,6 +38,7 @@ func main() {
 	}
 
 	flag.StringVar(&socketFile, "socket", filepath.Join(xdgRuntimeDir, oci.SocketName), "Socket file")
+	flag.StringVar(&comSocketFile, "com-socket", filepath.Join(xdgRuntimeDir, "bypass4netnsd-com.sock"), "Socket file for communication with bypass4netns")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
@@ -105,7 +107,7 @@ func main() {
 
 	logrus.Infof("SocketPath: %s", socketFile)
 
-	handler := bypass4netns.NewHandler(socketFile)
+	handler := bypass4netns.NewHandler(socketFile, comSocketFile)
 
 	subnets := []net.IPNet{}
 	var subnetsAuto bool

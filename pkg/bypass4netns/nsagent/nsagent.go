@@ -47,7 +47,8 @@ func inspect(w io.Writer) error {
 			continue
 		}
 		entry := types.Interface{
-			Name: intf.Name,
+			Name:   intf.Name,
+			HWAddr: intf.HardwareAddr.String(),
 		}
 		for _, addr := range addrs {
 			if ipNet, ok := addr.(*net.IPNet); ok {

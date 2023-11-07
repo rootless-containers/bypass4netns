@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/rootless-containers/bypass4netns/pkg/util"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
@@ -143,9 +144,10 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	}
 	ss.addr = destAddr
 
-	// check wheter the destination is bypassed or not.
+	// check whether the destination is bypassed or not.
 	connectToLoopback := false
 	connectToInterface := false
+	connectToOtherBypassedContainer := false
 	fwdPort, ok := handler.forwardingPorts[int(destAddr.Port)]
 	if ok {
 		if destAddr.IP.IsLoopback() {
@@ -157,8 +159,40 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		}
 	}
 
+	// check whether the destination container socket is bypassed or not.
 	isNotBypassed := handler.nonBypassable.Contains(destAddr.IP)
-	if !connectToLoopback && !connectToInterface && isNotBypassed {
+	if isNotBypassed {
+		ss.logger.Infof("container interfaces = %v", handler.containerInterfaces)
+		for k, v := range handler.containerInterfaces {
+			// ignore myself
+			if k == handler.state.State.ID {
+				continue
+			}
+
+			// check destination port is bypassed or not
+			dstPort, ok := v.ForwardingPorts[int(destAddr.Port)]
+			if !ok {
+				continue
+			}
+			fwdPort.ChildPort = destAddr.Port
+			fwdPort.HostPort = dstPort
+
+			// check destination container has the destination address
+			for _, intf := range v.Interfaces {
+				// ignore loopback interface
+				if intf.IsLoopback {
+					continue
+				}
+				for _, addr := range intf.Addresses {
+					if addr.IP.Equal(destAddr.IP) {
+						ss.logger.Infof("destination address %v is container %q address and bypassed", destAddr, util.ShrinkID(k))
+						connectToOtherBypassedContainer = true
+					}
+				}
+			}
+		}
+	}
+	if !connectToLoopback && !connectToInterface && !connectToOtherBypassedContainer && isNotBypassed {
 		ss.logger.Infof("destination address %v is not bypassed.", destAddr.IP)
 		ss.state = NotBypassable
 		return
@@ -194,7 +228,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		return
 	}
 
-	if connectToLoopback || connectToInterface {
+	if connectToLoopback || connectToInterface || connectToOtherBypassedContainer {
 		p := make([]byte, 2)
 		binary.BigEndian.PutUint16(p, uint16(fwdPort.HostPort))
 		// writing host port at sock_addr's port offset
@@ -208,7 +242,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		ss.logger.Infof("destination's port %d is rewritten to host-side port %d", ss.addr.Port, fwdPort.HostPort)
 	}
 
-	if connectToInterface {
+	if connectToInterface || connectToOtherBypassedContainer {
 		var addr net.IP
 		// writing host's loopback address to connect to bypassed socket at sock_addr's address offset
 		// TODO: should we return dummy value when getpeername(2) is called?
@@ -216,11 +250,13 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		case syscall.AF_INET:
 			// create loopback address "127.0.0.1"
 			addr = net.IPv4zero
+			addr = addr.To4()
 			addr[0] = 127
-			addr[4] = 1
+			addr[3] = 1
 			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, addr[0:4])
 		case syscall.AF_INET6:
 			addr = net.IPv6loopback
+			addr = addr.To16()
 			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, addr[0:16])
 		default:
 			ss.logger.Errorf("unexpected destination address family %d", destAddr.Family)
@@ -232,6 +268,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 			ss.state = Error
 			return
 		}
+
 		ss.logger.Infof("destination address %s is rewritten to host loopback address %s", destAddr.IP, addr)
 	}
 
