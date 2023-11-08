@@ -13,6 +13,7 @@ import (
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nsagent"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
 	"github.com/rootless-containers/bypass4netns/pkg/oci"
 	pkgversion "github.com/rootless-containers/bypass4netns/pkg/version"
 	seccomp "github.com/seccomp/libseccomp-golang"
@@ -49,6 +50,7 @@ func main() {
 	version := flag.Bool("version", false, "Show version")
 	help := flag.Bool("help", false, "Show help")
 	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)") // TODO: hide
+	tracerFlag := flag.Bool("tracer", false, "(An internal flag. Do not use manually.)")   // TODO: hide
 
 	// Parse arguments
 	flag.Parse()
@@ -76,8 +78,25 @@ func main() {
 		os.Exit(0)
 	}
 
+	if logFilePath != "" {
+		logFile, err := os.Create(logFilePath)
+		if err != nil {
+			logrus.Fatalf("Cannnot write log file %s : %v", logFilePath, err)
+		}
+		defer logFile.Close()
+		logrus.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		logrus.Infof("LogFilePath: %s", logFilePath)
+	}
+
 	if *nsagentFlag {
 		if err := nsagent.Main(); err != nil {
+			logrus.Fatal(err)
+		}
+		os.Exit(0)
+	}
+
+	if *tracerFlag {
+		if err := tracer.Main(); err != nil {
 			logrus.Fatal(err)
 		}
 		os.Exit(0)
@@ -95,19 +114,9 @@ func main() {
 		logrus.Infof("PidFilePath: %s", pidFile)
 	}
 
-	if logFilePath != "" {
-		logFile, err := os.Create(logFilePath)
-		if err != nil {
-			logrus.Fatalf("Cannnot write log file %s : %v", logFilePath, err)
-		}
-		defer logFile.Close()
-		logrus.SetOutput(io.MultiWriter(os.Stderr, logFile))
-		logrus.Infof("LogFilePath: %s", logFilePath)
-	}
-
 	logrus.Infof("SocketPath: %s", socketFile)
 
-	handler := bypass4netns.NewHandler(socketFile, comSocketFile)
+	handler := bypass4netns.NewHandler(socketFile, comSocketFile, strings.Replace(logFilePath, ".log", "-tracer.log", -1))
 
 	subnets := []net.IPNet{}
 	var subnetsAuto bool

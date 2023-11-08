@@ -7,7 +7,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/rootless-containers/bypass4netns/pkg/util"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
@@ -163,33 +162,11 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	isNotBypassed := handler.nonBypassable.Contains(destAddr.IP)
 	if isNotBypassed {
 		ss.logger.Infof("container interfaces = %v", handler.containerInterfaces)
-		for k, v := range handler.containerInterfaces {
-			// ignore myself
-			if k == handler.state.State.ID {
-				continue
-			}
-
-			// check destination port is bypassed or not
-			dstPort, ok := v.ForwardingPorts[int(destAddr.Port)]
-			if !ok {
-				continue
-			}
-			fwdPort.ChildPort = destAddr.Port
-			fwdPort.HostPort = dstPort
-
-			// check destination container has the destination address
-			for _, intf := range v.Interfaces {
-				// ignore loopback interface
-				if intf.IsLoopback {
-					continue
-				}
-				for _, addr := range intf.Addresses {
-					if addr.IP.Equal(destAddr.IP) {
-						ss.logger.Infof("destination address %v is container %q address and bypassed", destAddr, util.ShrinkID(k))
-						connectToOtherBypassedContainer = true
-					}
-				}
-			}
+		hostPort, ok := handler.containerInterfaces[destAddr.String()]
+		if ok {
+			ss.logger.Infof("destination address %v is container address and bypassed", destAddr)
+			fwdPort.HostPort = hostPort
+			connectToOtherBypassedContainer = true
 		}
 	}
 	if !connectToLoopback && !connectToInterface && !connectToOtherBypassedContainer && isNotBypassed {

@@ -16,6 +16,7 @@ import (
 	"github.com/oraoto/go-pidfd"
 	"github.com/rootless-containers/bypass4netns/pkg/api/com"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -385,6 +386,7 @@ type ForwardPortMapping struct {
 type Handler struct {
 	socketPath               string
 	comSocketPath            string
+	tracerAgentLogPath       string
 	ignoredSubnets           []net.IPNet
 	ignoredSubnetsAutoUpdate bool
 	readyFd                  int
@@ -394,13 +396,14 @@ type Handler struct {
 }
 
 // NewHandler creates new seccomp notif handler
-func NewHandler(socketPath, comSocketPath string) *Handler {
+func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string) *Handler {
 	handler := Handler{
-		socketPath:      socketPath,
-		comSocketPath:   comSocketPath,
-		ignoredSubnets:  []net.IPNet{},
-		forwardingPorts: map[int]ForwardPortMapping{},
-		readyFd:         -1,
+		socketPath:         socketPath,
+		comSocketPath:      comSocketPath,
+		tracerAgentLogPath: tracerAgentLogPath,
+		ignoredSubnets:     []net.IPNet{},
+		forwardingPorts:    map[int]ForwardPortMapping{},
+		readyFd:            -1,
 	}
 
 	return &handler
@@ -447,8 +450,9 @@ type notifHandler struct {
 	// key is pid
 	processes map[uint32]*processStatus
 
-	// key is container ID
-	containerInterfaces map[string]com.ContainerInterfaces
+	// key is destination address e.g. "192.168.1.1:1000"
+	containerInterfaces map[string]int
+	tracer              *tracer.Tracer
 }
 
 func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
@@ -457,6 +461,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
 		processes:       map[uint32]*processStatus{},
+		tracer:          tracer.NewTracer(h.tracerAgentLogPath),
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate
@@ -509,6 +514,37 @@ func (h *Handler) StartHandle() {
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
+
+		// prepare tracer agent
+		err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
+		if err != nil {
+			logrus.WithError(err).Fatalf("failed to start tracer")
+		}
+		fwdPorts := []int{}
+		for _, v := range notifHandler.forwardingPorts {
+			fwdPorts = append(fwdPorts, v.ChildPort)
+		}
+		err = notifHandler.tracer.RegisterForwardPorts(fwdPorts)
+		if err != nil {
+			logrus.WithError(err).Fatalf("failed to register port")
+		}
+		logrus.Info("registered ports to tracer agent")
+
+		// check tracer agent is ready
+		for _, v := range fwdPorts {
+			dst := fmt.Sprintf("127.0.0.1:%d", v)
+			addr, err := notifHandler.tracer.ConnectToAddress([]string{dst})
+			if err != nil {
+				logrus.WithError(err).Warnf("failed to connect to %s", dst)
+				continue
+			}
+			if len(addr) != 1 || addr[0] != dst {
+				logrus.Warnf("failed to connect to %s", dst)
+				continue
+			}
+			logrus.Infof("successfully connected to %s", dst)
+		}
+
 		go notifHandler.handle()
 		go notifHandler.startBackgroundTask(h.comSocketPath)
 	}
@@ -547,10 +583,40 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 				ifLastUpdateUnix = lastUpdated
 			}
 		}
-		h.containerInterfaces, err = comClient.ListInterfaces(gocontext.TODO())
+		containerInterfaces, err := comClient.ListInterfaces(gocontext.TODO())
 		if err != nil {
 			logrus.WithError(err).Warn("failed to list container interfaces")
 		}
+
+		containerIf := map[string]int{}
+		for _, cont := range containerInterfaces {
+			for contPort, hostPort := range cont.ForwardingPorts {
+				for _, intf := range cont.Interfaces {
+					if intf.IsLoopback {
+						continue
+					}
+					for _, addr := range intf.Addresses {
+						// ignore ipv6 address
+						if addr.IP.To4() == nil {
+							continue
+						}
+						dstAddr := fmt.Sprintf("%s:%d", addr.IP, contPort)
+						addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
+						if err != nil {
+							logrus.WithError(err).Warnf("failed to connect to %s", dstAddr)
+							continue
+						}
+						if len(addrRes) != 1 || addrRes[0] != dstAddr {
+							logrus.Warnf("failed to connect to %s", dstAddr)
+							continue
+						}
+						logrus.Infof("successfully connected to %s", dstAddr)
+						containerIf[dstAddr] = hostPort
+					}
+				}
+			}
+		}
+		h.containerInterfaces = containerIf
 
 		time.Sleep(1 * time.Second)
 	}
