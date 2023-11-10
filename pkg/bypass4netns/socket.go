@@ -339,6 +339,36 @@ func (ss *socketStatus) handleSysBind(handler *notifHandler, ctx *context) {
 	ctx.resp.Flags &= (^uint32(SeccompUserNotifFlagContinue))
 }
 
+func (ss *socketStatus) handleSysGetpeername(ctx *context) {
+	if ss.addr == nil {
+		return
+	}
+
+	buf, err := ss.addr.toBytes()
+	if err != nil {
+		ss.logger.WithError(err).Errorf("failed to serialize address %s", ss.addr)
+		return
+	}
+
+	err = writeProcMem(ss.pid, ctx.req.Data.Args[1], buf)
+	if err != nil {
+		ss.logger.WithError(err).Errorf("failed to write address %s", ss.addr)
+		return
+	}
+
+	bufLen := make([]byte, 4)
+	binary.LittleEndian.PutUint32(bufLen, uint32(len(buf)))
+	err = writeProcMem(ss.pid, ctx.req.Data.Args[2], bufLen)
+	if err != nil {
+		ss.logger.WithError(err).Errorf("failed to write address length %d", len(buf))
+		return
+	}
+
+	ctx.resp.Flags &= (^uint32(SeccompUserNotifFlagContinue))
+
+	ss.logger.Infof("rewrite getpeername() address to %s", ss.addr)
+}
+
 func (ss *socketStatus) configureSocket(sockfd int) error {
 	for _, optVal := range ss.socketOptions {
 		_, _, errno := syscall.Syscall6(syscall.SYS_SETSOCKOPT, uintptr(sockfd), uintptr(optVal.level), uintptr(optVal.optname), uintptr(unsafe.Pointer(&optVal.optval[0])), uintptr(optVal.optlen), 0)

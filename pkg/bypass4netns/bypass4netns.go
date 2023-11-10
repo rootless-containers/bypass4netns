@@ -314,6 +314,10 @@ func (h *notifHandler) handleReq(ctx *context) {
 		}
 	}
 
+	if syscallName == "getpeername" {
+		sock.handleSysGetpeername(ctx)
+	}
+
 	switch sock.state {
 	case NotBypassable, Bypassed:
 		return
@@ -330,6 +334,8 @@ func (h *notifHandler) handleReq(ctx *context) {
 		sock.handleSysSetsockopt(ctx)
 	case "fcntl":
 		sock.handleSysFcntl(ctx)
+	case "getpeername":
+		// already handled
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle

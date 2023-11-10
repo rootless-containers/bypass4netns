@@ -62,3 +62,36 @@ func newSockaddr(buf []byte) (*sockaddr, error) {
 	}
 	return sa, nil
 }
+
+func (sa *sockaddr) toBytes() ([]byte, error) {
+	res := bytes.Buffer{}
+	// TODO: support big endian hosts
+	endian := binary.LittleEndian
+
+	// ntohs
+	p := make([]byte, 2)
+	binary.BigEndian.PutUint16(p, uint16(sa.Port))
+
+	switch sa.Family {
+	case syscall.AF_INET:
+		addr4 := syscall.RawSockaddrInet4{}
+		addr4.Family = syscall.AF_INET
+		copy(addr4.Addr[:], sa.IP.To4()[:])
+
+		addr4.Port = endian.Uint16(p)
+		binary.Write(&res, endian, addr4)
+	case syscall.AF_INET6:
+		addr6 := syscall.RawSockaddrInet6{}
+		addr6.Family = syscall.AF_INET6
+		copy(addr6.Addr[:], sa.IP.To16()[:])
+
+		addr6.Port = endian.Uint16(p)
+		addr6.Flowinfo = sa.Flowinfo
+		addr6.Scope_id = sa.ScopeID
+		binary.Write(&res, endian, addr6)
+	default:
+		return nil, fmt.Errorf("expected AF_INET or AF_INET6, got %d", sa.Family)
+	}
+
+	return res.Bytes(), nil
+}
