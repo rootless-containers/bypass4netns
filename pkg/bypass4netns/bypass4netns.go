@@ -451,8 +451,14 @@ type notifHandler struct {
 	processes map[uint32]*processStatus
 
 	// key is destination address e.g. "192.168.1.1:1000"
-	containerInterfaces map[string]int
+	containerInterfaces map[string]containerInterface
 	tracer              *tracer.Tracer
+}
+
+type containerInterface struct {
+	containerID     string
+	hostPort        int
+	lastCheckedUnix int64
 }
 
 func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
@@ -588,7 +594,7 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 			logrus.WithError(err).Warn("failed to list container interfaces")
 		}
 
-		containerIf := map[string]int{}
+		containerIf := map[string]containerInterface{}
 		for _, cont := range containerInterfaces {
 			for contPort, hostPort := range cont.ForwardingPorts {
 				for _, intf := range cont.Interfaces {
@@ -601,6 +607,11 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							continue
 						}
 						dstAddr := fmt.Sprintf("%s:%d", addr.IP, contPort)
+						contIf, ok := h.containerInterfaces[dstAddr]
+						if ok && contIf.lastCheckedUnix+10 > time.Now().Unix() {
+							containerIf[dstAddr] = contIf
+							continue
+						}
 						addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
 						if err != nil {
 							logrus.WithError(err).Warnf("failed to connect to %s", dstAddr)
@@ -611,7 +622,11 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							continue
 						}
 						logrus.Infof("successfully connected to %s", dstAddr)
-						containerIf[dstAddr] = hostPort
+						containerIf[dstAddr] = containerInterface{
+							containerID:     cont.ContainerID,
+							hostPort:        hostPort,
+							lastCheckedUnix: time.Now().Unix(),
+						}
 					}
 				}
 			}

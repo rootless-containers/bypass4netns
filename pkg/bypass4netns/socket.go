@@ -162,10 +162,10 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	isNotBypassed := handler.nonBypassable.Contains(destAddr.IP)
 	if isNotBypassed {
 		ss.logger.Infof("container interfaces = %v", handler.containerInterfaces)
-		hostPort, ok := handler.containerInterfaces[destAddr.String()]
+		contIf, ok := handler.containerInterfaces[destAddr.String()]
 		if ok {
 			ss.logger.Infof("destination address %v is container address and bypassed", destAddr)
-			fwdPort.HostPort = hostPort
+			fwdPort.HostPort = contIf.hostPort
 			connectToOtherBypassedContainer = true
 		}
 	}
