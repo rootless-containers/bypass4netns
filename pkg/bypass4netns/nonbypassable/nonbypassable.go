@@ -174,7 +174,6 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 		}
 		x.mu.Lock()
 		logrus.Infof("Dynamic non-bypassable list: old dynamic=%v, new dynamic=%v, static=%v", x.dynamicList, newList, x.staticList)
-		logrus.Infof("Interface list: %v", newInterfaces)
 		x.dynamicList = newList
 		x.interfaces = newInterfaces
 		x.lastUpdateUnix = time.Now().Unix()

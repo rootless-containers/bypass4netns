@@ -213,12 +213,12 @@ func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, er
 	if !ok {
 		proc = newProcessStatus()
 		h.processes[pid] = proc
-		logger.Info("process is registered")
+		logger.Debug("process is registered")
 	}
 
 	sock, ok := proc.sockets[sockfd]
 	if ok {
-		logger.Info("socket is already registered")
+		logger.Warn("socket is already registered")
 		return sock, nil
 	}
 
@@ -251,7 +251,11 @@ func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, er
 	}
 
 	proc.sockets[sockfd] = sock
-	logger.Infof("socket is registered (state=%s)", sock.state)
+	if sock.state == NotBypassable {
+		logger.Debugf("socket is registered (state=%s)", sock.state)
+	} else {
+		logger.Infof("socket is registered (state=%s)", sock.state)
+	}
 
 	return sock, nil
 }
@@ -266,7 +270,7 @@ func (h *notifHandler) getSocket(pid uint32, sockfd int) *socketStatus {
 }
 
 func (h *notifHandler) removeSocket(pid uint32, sockfd int) {
-	defer logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd}).Infof("socket is removed")
+	defer logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd}).Debugf("socket is removed")
 	proc, ok := h.processes[pid]
 	if !ok {
 		return
@@ -289,7 +293,7 @@ func (h *notifHandler) handleReq(ctx *context) {
 	// cleanup sockets when the process exit.
 	if syscallName == "_exit" || syscallName == "exit_group" {
 		delete(h.processes, ctx.req.Pid)
-		logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid}).Infof("process is removed")
+		logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid}).Debugf("process is removed")
 		return
 	}
 
@@ -534,7 +538,7 @@ func (h *Handler) StartHandle() {
 		if err != nil {
 			logrus.WithError(err).Fatalf("failed to register port")
 		}
-		logrus.Info("registered ports to tracer agent")
+		logrus.WithField("fwdPorts", fwdPorts).Info("registered ports to tracer agent")
 
 		// check tracer agent is ready
 		for _, v := range fwdPorts {
@@ -545,11 +549,12 @@ func (h *Handler) StartHandle() {
 				continue
 			}
 			if len(addr) != 1 || addr[0] != dst {
-				logrus.Warnf("failed to connect to %s", dst)
+				logrus.Fatalf("failed to connect to %s", dst)
 				continue
 			}
-			logrus.Infof("successfully connected to %s", dst)
+			logrus.Debugf("successfully connected to %s", dst)
 		}
+		logrus.Infof("tracer is ready")
 
 		go notifHandler.handle()
 		go notifHandler.startBackgroundTask(h.comSocketPath)
@@ -621,7 +626,7 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							logrus.Warnf("failed to connect to %s", dstAddr)
 							continue
 						}
-						logrus.Infof("successfully connected to %s", dstAddr)
+						logrus.Debugf("successfully connected to %s", dstAddr)
 						containerIf[dstAddr] = containerInterface{
 							containerID:     cont.ContainerID,
 							hostPort:        hostPort,

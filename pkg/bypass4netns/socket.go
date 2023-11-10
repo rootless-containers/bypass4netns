@@ -112,7 +112,7 @@ func (ss *socketStatus) handleSysSetsockopt(ctx *context) error {
 	}
 	ss.socketOptions = append(ss.socketOptions, value)
 
-	ss.logger.Infof("setsockopt level=%d optname=%d optval=%v optlen=%d was recorded.", level, optname, optval, optlen)
+	ss.logger.Debugf("setsockopt level=%d optname=%d optval=%v optlen=%d was recorded.", level, optname, optval, optlen)
 	return nil
 }
 
@@ -127,7 +127,7 @@ func (ss *socketStatus) handleSysFcntl(ctx *context) {
 			value: ctx.req.Data.Args[2],
 		}
 		ss.fcntlOptions = append(ss.fcntlOptions, opt)
-		ss.logger.Infof("fcntl cmd=0x%x value=%d was recorded.", fcntlCmd, opt.value)
+		ss.logger.Debugf("fcntl cmd=0x%x value=%d was recorded.", fcntlCmd, opt.value)
 	case unix.F_GETFL: // 0x3
 		// ignore these
 	default:
