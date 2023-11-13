@@ -45,6 +45,7 @@ func main() {
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
+	disableTracer := flag.Bool("disable-tracer", false, "Disable connection tracer")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
 	help := flag.Bool("help", false, "Show help")
@@ -107,6 +108,11 @@ func main() {
 	logrus.Infof("bypass4netns executable path: %s", b4nnPath)
 
 	b4nsdDriver := bypass4netnsd.NewDriver(b4nnPath, comSocketFile)
+
+	if *disableTracer {
+		logrus.Info("Connection tracer is disabled")
+		b4nsdDriver.DisableTracer = *disableTracer
+	}
 
 	waitChan := make(chan bool)
 	go func() {

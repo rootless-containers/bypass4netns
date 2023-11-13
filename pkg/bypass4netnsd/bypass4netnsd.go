@@ -23,6 +23,7 @@ type Driver struct {
 	lock                 sync.RWMutex
 	containerInterfaces  map[string]com.ContainerInterfaces
 	interfacesLock       sync.RWMutex
+	DisableTracer        bool
 }
 
 func NewDriver(execPath string, comSocketPath string) *Driver {
@@ -33,6 +34,7 @@ func NewDriver(execPath string, comSocketPath string) *Driver {
 		lock:                 sync.RWMutex{},
 		containerInterfaces:  map[string]com.ContainerInterfaces{},
 		interfacesLock:       sync.RWMutex{},
+		DisableTracer:        false,
 	}
 }
 
@@ -81,6 +83,9 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	}
 
 	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
+	if d.DisableTracer {
+		b4nnArgs = append(b4nnArgs, "--disable-tracer=true")
+	}
 
 	// prepare pipe for ready notification
 	readyR, readyW, err := os.Pipe()

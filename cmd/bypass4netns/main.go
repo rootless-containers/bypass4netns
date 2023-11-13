@@ -51,6 +51,7 @@ func main() {
 	help := flag.Bool("help", false, "Show help")
 	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)") // TODO: hide
 	tracerFlag := flag.Bool("tracer", false, "(An internal flag. Do not use manually.)")   // TODO: hide
+	disableTracerFlag := flag.Bool("disable-tracer", false, "disable connection tracer")
 
 	// Parse arguments
 	flag.Parse()
@@ -207,5 +208,5 @@ func main() {
 		os.Exit(0)
 	}()
 
-	handler.StartHandle()
+	handler.StartHandle(*disableTracerFlag)
 }

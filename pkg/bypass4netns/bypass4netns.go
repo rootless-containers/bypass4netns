@@ -463,6 +463,7 @@ type notifHandler struct {
 	// key is destination address e.g. "192.168.1.1:1000"
 	containerInterfaces map[string]containerInterface
 	tracer              *tracer.Tracer
+	disableTracer       bool
 }
 
 type containerInterface struct {
@@ -491,7 +492,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 }
 
 // StartHandle starts seccomp notif handler
-func (h *Handler) StartHandle() {
+func (h *Handler) StartHandle(disableTracer bool) {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
@@ -530,37 +531,42 @@ func (h *Handler) StartHandle() {
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
+		notifHandler.disableTracer = disableTracer
 
 		// prepare tracer agent
-		err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
-		if err != nil {
-			logrus.WithError(err).Fatalf("failed to start tracer")
-		}
-		fwdPorts := []int{}
-		for _, v := range notifHandler.forwardingPorts {
-			fwdPorts = append(fwdPorts, v.ChildPort)
-		}
-		err = notifHandler.tracer.RegisterForwardPorts(fwdPorts)
-		if err != nil {
-			logrus.WithError(err).Fatalf("failed to register port")
-		}
-		logrus.WithField("fwdPorts", fwdPorts).Info("registered ports to tracer agent")
-
-		// check tracer agent is ready
-		for _, v := range fwdPorts {
-			dst := fmt.Sprintf("127.0.0.1:%d", v)
-			addr, err := notifHandler.tracer.ConnectToAddress([]string{dst})
+		if !notifHandler.disableTracer {
+			err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
 			if err != nil {
-				logrus.WithError(err).Warnf("failed to connect to %s", dst)
-				continue
+				logrus.WithError(err).Fatalf("failed to start tracer")
 			}
-			if len(addr) != 1 || addr[0] != dst {
-				logrus.Fatalf("failed to connect to %s", dst)
-				continue
+			fwdPorts := []int{}
+			for _, v := range notifHandler.forwardingPorts {
+				fwdPorts = append(fwdPorts, v.ChildPort)
 			}
-			logrus.Debugf("successfully connected to %s", dst)
+			err = notifHandler.tracer.RegisterForwardPorts(fwdPorts)
+			if err != nil {
+				logrus.WithError(err).Fatalf("failed to register port")
+			}
+			logrus.WithField("fwdPorts", fwdPorts).Info("registered ports to tracer agent")
+
+			// check tracer agent is ready
+			for _, v := range fwdPorts {
+				dst := fmt.Sprintf("127.0.0.1:%d", v)
+				addr, err := notifHandler.tracer.ConnectToAddress([]string{dst})
+				if err != nil {
+					logrus.WithError(err).Warnf("failed to connect to %s", dst)
+					continue
+				}
+				if len(addr) != 1 || addr[0] != dst {
+					logrus.Fatalf("failed to connect to %s", dst)
+					continue
+				}
+				logrus.Debugf("successfully connected to %s", dst)
+			}
+			logrus.Infof("tracer is ready")
+		} else {
+			logrus.Infof("tracer is disabled")
 		}
-		logrus.Infof("tracer is ready")
 
 		go notifHandler.handle()
 		go notifHandler.startBackgroundTask(h.comSocketPath)
@@ -623,14 +629,16 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							containerIf[dstAddr] = contIf
 							continue
 						}
-						addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
-						if err != nil {
-							logrus.WithError(err).Warnf("failed to connect to %s", dstAddr)
-							continue
-						}
-						if len(addrRes) != 1 || addrRes[0] != dstAddr {
-							logrus.Warnf("failed to connect to %s", dstAddr)
-							continue
+						if !h.disableTracer {
+							addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
+							if err != nil {
+								logrus.WithError(err).Debugf("failed to connect to %s", dstAddr)
+								continue
+							}
+							if len(addrRes) != 1 || addrRes[0] != dstAddr {
+								logrus.Debugf("failed to connect to %s", dstAddr)
+								continue
+							}
 						}
 						logrus.Debugf("successfully connected to %s", dstAddr)
 						containerIf[dstAddr] = containerInterface{
@@ -638,6 +646,7 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							hostPort:        hostPort,
 							lastCheckedUnix: time.Now().Unix(),
 						}
+						logrus.Debugf("%s -> 127.0.0.1:%d is registered", dstAddr, hostPort)
 					}
 				}
 			}
