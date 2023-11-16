@@ -1,9 +1,12 @@
 package bypass4netns
 
 import (
+	gocontext "context"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -143,6 +146,22 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	}
 	ss.addr = destAddr
 
+	var newDestAddr net.IP
+	switch destAddr.Family {
+	case syscall.AF_INET:
+		newDestAddr = net.IPv4zero
+		newDestAddr = newDestAddr.To4()
+		newDestAddr[0] = 127
+		newDestAddr[3] = 1
+	case syscall.AF_INET6:
+		newDestAddr = net.IPv6loopback
+		newDestAddr = newDestAddr.To16()
+	default:
+		ss.logger.Errorf("unexpected destination address family %d", destAddr.Family)
+		ss.state = Error
+		return
+	}
+
 	// check whether the destination is bypassed or not.
 	connectToLoopback := false
 	connectToInterface := false
@@ -158,11 +177,38 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		}
 	}
 
-	contIf, ok := handler.containerInterfaces[destAddr.String()]
-	if ok {
-		ss.logger.Infof("destination address %v is container address and bypassed", destAddr)
-		fwdPort.HostPort = contIf.hostPort
-		connectToOtherBypassedContainer = true
+	if handler.overlay.Enable && destAddr.IP.IsPrivate() {
+		// currently, only private addresses are available in overlay network.
+		res, err := handler.overlay.etcdKeyApi.Get(gocontext.TODO(), destAddr.String(), nil)
+		if err != nil {
+			ss.logger.Warnf("destination address %q is not registered", destAddr.String())
+		} else {
+			hostAddrWithPort := res.Node.Value
+			hostAddrs := strings.Split(hostAddrWithPort, ":")
+			if len(hostAddrs) != 2 {
+				ss.logger.Errorf("invalid address format %q", hostAddrWithPort)
+				ss.state = Error
+				return
+			}
+			hostAddr := hostAddrs[0]
+			hostPort, err := strconv.Atoi(hostAddrs[1])
+			if err != nil {
+				ss.logger.Errorf("invalid address format %q", hostAddrWithPort)
+				ss.state = Error
+				return
+			}
+			newDestAddr = net.ParseIP(hostAddr)
+			fwdPort.HostPort = hostPort
+			connectToOtherBypassedContainer = true
+			ss.logger.Infof("destination address %v is container address and bypassed via overlay network", destAddr)
+		}
+	} else {
+		contIf, ok := handler.containerInterfaces[destAddr.String()]
+		if ok {
+			ss.logger.Infof("destination address %v is container address and bypassed", destAddr)
+			fwdPort.HostPort = contIf.hostPort
+			connectToOtherBypassedContainer = true
+		}
 	}
 
 	// check whether the destination container socket is bypassed or not.
@@ -219,21 +265,15 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	}
 
 	if connectToInterface || connectToOtherBypassedContainer {
-		var addr net.IP
 		// writing host's loopback address to connect to bypassed socket at sock_addr's address offset
 		// TODO: should we return dummy value when getpeername(2) is called?
 		switch destAddr.Family {
 		case syscall.AF_INET:
-			// create loopback address "127.0.0.1"
-			addr = net.IPv4zero
-			addr = addr.To4()
-			addr[0] = 127
-			addr[3] = 1
-			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, addr[0:4])
+			newDestAddr = newDestAddr.To4()
+			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, newDestAddr[0:4])
 		case syscall.AF_INET6:
-			addr = net.IPv6loopback
-			addr = addr.To16()
-			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, addr[0:16])
+			newDestAddr = newDestAddr.To16()
+			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, newDestAddr[0:16])
 		default:
 			ss.logger.Errorf("unexpected destination address family %d", destAddr.Family)
 			ss.state = Error
@@ -245,7 +285,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 			return
 		}
 
-		ss.logger.Infof("destination address %s is rewritten to host loopback address %s", destAddr.IP, addr)
+		ss.logger.Infof("destination address %s is rewritten to %s", destAddr.IP, newDestAddr)
 	}
 
 	ss.state = Bypassed

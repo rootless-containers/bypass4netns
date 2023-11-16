@@ -23,12 +23,14 @@ import (
 )
 
 var (
-	socketFile    string
-	comSocketFile string
-	pidFile       string
-	logFilePath   string
-	readyFd       int
-	exitFd        int
+	socketFile         string
+	comSocketFile      string
+	pidFile            string
+	logFilePath        string
+	overlayEtcd        string
+	overlayHostAddress string
+	readyFd            int
+	exitFd             int
 )
 
 func main() {
@@ -42,6 +44,8 @@ func main() {
 	flag.StringVar(&comSocketFile, "com-socket", filepath.Join(xdgRuntimeDir, "bypass4netnsd-com.sock"), "Socket file for communication with bypass4netns")
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
+	flag.StringVar(&overlayEtcd, "overlay-etcd", "", "Etcd address for overlay network")
+	flag.StringVar(&overlayHostAddress, "overlay-host-address", "", "Host address for overlay network")
 	flag.IntVar(&readyFd, "ready-fd", -1, "File descriptor to notify when ready")
 	flag.IntVar(&exitFd, "exit-fd", -1, "File descriptor for terminating bypass4netns")
 	ignoredSubnets := flag.StringSlice("ignore", []string{"127.0.0.0/8"}, "Subnets to ignore in bypass4netns. Can be also set to \"auto\".")
@@ -52,6 +56,7 @@ func main() {
 	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)") // TODO: hide
 	tracerFlag := flag.Bool("tracer", false, "(An internal flag. Do not use manually.)")   // TODO: hide
 	disableTracerFlag := flag.Bool("disable-tracer", false, "disable connection tracer")
+	overlayEnable := flag.Bool("overlay-enable", false, "Enable overlay network")
 
 	// Parse arguments
 	flag.Parse()
@@ -101,6 +106,16 @@ func main() {
 			logrus.Fatal(err)
 		}
 		os.Exit(0)
+	}
+
+	if *overlayEnable {
+		if overlayEtcd == "" {
+			logrus.Fatal("--overlay-etcd is not specified")
+		}
+		if overlayHostAddress == "" {
+			logrus.Fatal("--overlay-host-address is not specified")
+		}
+		logrus.Infof("Overlay network is enabled. Etcd address is %q", overlayEtcd)
 	}
 
 	if err := os.Remove(socketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -208,5 +223,10 @@ func main() {
 		os.Exit(0)
 	}()
 
-	handler.StartHandle(*disableTracerFlag)
+	overlay := &bypass4netns.OverlayConfig{
+		Enable:      *overlayEnable,
+		EtcdAddress: overlayEtcd,
+		HostAddress: overlayHostAddress,
+	}
+	handler.StartHandle(*disableTracerFlag, overlay)
 }

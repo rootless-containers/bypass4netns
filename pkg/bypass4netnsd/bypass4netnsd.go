@@ -24,6 +24,9 @@ type Driver struct {
 	containerInterfaces  map[string]com.ContainerInterfaces
 	interfacesLock       sync.RWMutex
 	DisableTracer        bool
+	OverlayEnable        bool
+	OverlayEtcd          string
+	OverlayHostAddress   string
 }
 
 func NewDriver(execPath string, comSocketPath string) *Driver {
@@ -35,6 +38,8 @@ func NewDriver(execPath string, comSocketPath string) *Driver {
 		containerInterfaces:  map[string]com.ContainerInterfaces{},
 		interfacesLock:       sync.RWMutex{},
 		DisableTracer:        false,
+		OverlayEnable:        false,
+		OverlayEtcd:          "",
 	}
 }
 
@@ -85,6 +90,12 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
 	if d.DisableTracer {
 		b4nnArgs = append(b4nnArgs, "--disable-tracer=true")
+	}
+
+	if d.OverlayEnable {
+		b4nnArgs = append(b4nnArgs, "--overlay-enable=true")
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--overlay-etcd=%s", d.OverlayEtcd))
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--overlay-host-address=%s", d.OverlayHostAddress))
 	}
 
 	// prepare pipe for ready notification

@@ -19,6 +19,7 @@ import (
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
+	"go.etcd.io/etcd/client"
 	"golang.org/x/sys/unix"
 )
 
@@ -450,6 +451,15 @@ func (h *Handler) SetReadyFd(fd int) error {
 	return nil
 }
 
+type OverlayConfig struct {
+	Enable           bool
+	EtcdAddress      string
+	HostAddress      string
+	etcdClientConfig client.Config
+	etcdClient       client.Client
+	etcdKeyApi       client.KeysAPI
+}
+
 type notifHandler struct {
 	fd                      libseccomp.ScmpFd
 	state                   *specs.ContainerProcessState
@@ -464,6 +474,7 @@ type notifHandler struct {
 	containerInterfaces map[string]containerInterface
 	tracer              *tracer.Tracer
 	disableTracer       bool
+	overlay             *OverlayConfig
 }
 
 type containerInterface struct {
@@ -492,7 +503,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 }
 
 // StartHandle starts seccomp notif handler
-func (h *Handler) StartHandle(disableTracer bool) {
+func (h *Handler) StartHandle(disableTracer bool, overlayConfig *OverlayConfig) {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
@@ -532,9 +543,22 @@ func (h *Handler) StartHandle(disableTracer bool) {
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
 		notifHandler.disableTracer = disableTracer
+		notifHandler.overlay = overlayConfig
+		if notifHandler.overlay.Enable {
+			notifHandler.overlay.etcdClientConfig = client.Config{
+				Endpoints:               []string{notifHandler.overlay.EtcdAddress},
+				Transport:               client.DefaultTransport,
+				HeaderTimeoutPerRequest: 2 * time.Second,
+			}
+			notifHandler.overlay.etcdClient, err = client.New(notifHandler.overlay.etcdClientConfig)
+			if err != nil {
+				logrus.WithError(err).Fatal("failed to create etcd client")
+			}
+			notifHandler.overlay.etcdKeyApi = client.NewKeysAPI(notifHandler.overlay.etcdClient)
+		}
 
 		// prepare tracer agent
-		if !notifHandler.disableTracer {
+		if !notifHandler.disableTracer && !notifHandler.overlay.Enable {
 			err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
 			if err != nil {
 				logrus.WithError(err).Fatalf("failed to start tracer")
@@ -569,7 +593,11 @@ func (h *Handler) StartHandle(disableTracer bool) {
 		}
 
 		go notifHandler.handle()
-		go notifHandler.startBackgroundTask(h.comSocketPath)
+		if notifHandler.overlay.Enable {
+			go notifHandler.startBackgroundTaskForOverlayNetwork()
+		} else {
+			go notifHandler.startBackgroundTask(h.comSocketPath)
+		}
 	}
 }
 
@@ -653,6 +681,44 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 		}
 		h.containerInterfaces = containerIf
 
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func (h *notifHandler) startBackgroundTaskForOverlayNetwork() {
+	ifLastUpdateUnix := int64(0)
+	for {
+		lastUpdated := h.nonBypassable.GetLastUpdateUnix()
+		if lastUpdated > ifLastUpdateUnix || ifLastUpdateUnix+10 < time.Now().Unix() {
+			ifs := h.nonBypassable.GetInterfaces()
+			for _, intf := range ifs {
+				if intf.IsLoopback {
+					continue
+				}
+				for _, addr := range intf.Addresses {
+					// ignore IPv6 address
+					if addr.IP.To4() == nil {
+						continue
+					}
+					for _, v := range h.forwardingPorts {
+						containerAddr := fmt.Sprintf("%s:%d", addr.IP, v.ChildPort)
+						hostAddr := fmt.Sprintf("%s:%d", h.overlay.HostAddress, v.HostPort)
+						// Remove entries with timeout
+						// TODO: Remove related entries when exiting.
+						opts := &client.SetOptions{
+							TTL: time.Second * 15,
+						}
+						_, err := h.overlay.etcdKeyApi.Set(gocontext.TODO(), containerAddr, hostAddr, opts)
+						if err != nil {
+							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
+						} else {
+							logrus.Infof("Registered %s -> %s", containerAddr, hostAddr)
+						}
+					}
+				}
+			}
+			ifLastUpdateUnix = time.Now().Unix()
+		}
 		time.Sleep(1 * time.Second)
 	}
 }

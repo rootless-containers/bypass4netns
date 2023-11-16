@@ -21,11 +21,13 @@ import (
 )
 
 var (
-	socketFile    string
-	comSocketFile string // socket for channel with bypass4netns
-	pidFile       string
-	logFilePath   string
-	b4nnPath      string
+	socketFile         string
+	comSocketFile      string // socket for channel with bypass4netns
+	pidFile            string
+	logFilePath        string
+	b4nnPath           string
+	overlayEtcd        string
+	overlayHostAddress string
 )
 
 func main() {
@@ -45,7 +47,10 @@ func main() {
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
+	flag.StringVar(&overlayEtcd, "overlay-etcd", "", "Etcd address for overlay network")
+	flag.StringVar(&overlayHostAddress, "overlay-host-address", "", "Host address for overlay network")
 	disableTracer := flag.Bool("disable-tracer", false, "Disable connection tracer")
+	overlayEnable := flag.Bool("overlay-enable", false, "Enable overlay network")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
 	help := flag.Bool("help", false, "Show help")
@@ -112,6 +117,19 @@ func main() {
 	if *disableTracer {
 		logrus.Info("Connection tracer is disabled")
 		b4nsdDriver.DisableTracer = *disableTracer
+	}
+
+	if *overlayEnable {
+		if overlayEtcd == "" {
+			logrus.Fatal("--overlay-etcd is not specified")
+		}
+		if overlayHostAddress == "" {
+			logrus.Fatal("--overlay-host-address is not specified")
+		}
+		b4nsdDriver.OverlayEnable = *overlayEnable
+		b4nsdDriver.OverlayEtcd = overlayEtcd
+		b4nsdDriver.OverlayHostAddress = overlayHostAddress
+		logrus.Infof("Overlay network is enabled. etcd address is %q host address is %q", b4nsdDriver.OverlayEtcd, b4nsdDriver.OverlayHostAddress)
 	}
 
 	waitChan := make(chan bool)
