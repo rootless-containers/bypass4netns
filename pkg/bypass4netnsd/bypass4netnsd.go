@@ -23,10 +23,10 @@ type Driver struct {
 	lock                 sync.RWMutex
 	containerInterfaces  map[string]com.ContainerInterfaces
 	interfacesLock       sync.RWMutex
-	DisableTracer        bool
-	OverlayEnable        bool
-	OverlayEtcd          string
-	OverlayHostAddress   string
+	TracerEnable         bool
+	MultinodeEnable      bool
+	MultinodeEtcdAddress string
+	MultinodeHostAddress string
 }
 
 func NewDriver(execPath string, comSocketPath string) *Driver {
@@ -37,9 +37,8 @@ func NewDriver(execPath string, comSocketPath string) *Driver {
 		lock:                 sync.RWMutex{},
 		containerInterfaces:  map[string]com.ContainerInterfaces{},
 		interfacesLock:       sync.RWMutex{},
-		DisableTracer:        false,
-		OverlayEnable:        false,
-		OverlayEtcd:          "",
+		TracerEnable:         false,
+		MultinodeEnable:      false,
 	}
 }
 
@@ -88,14 +87,14 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	}
 
 	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
-	if d.DisableTracer {
-		b4nnArgs = append(b4nnArgs, "--disable-tracer=true")
+	if d.TracerEnable {
+		b4nnArgs = append(b4nnArgs, "--tracer=true")
 	}
 
-	if d.OverlayEnable {
-		b4nnArgs = append(b4nnArgs, "--overlay-enable=true")
-		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--overlay-etcd=%s", d.OverlayEtcd))
-		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--overlay-host-address=%s", d.OverlayHostAddress))
+	if d.MultinodeEnable {
+		b4nnArgs = append(b4nnArgs, "--multinode=true")
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--multinode-etcd-address=%s", d.MultinodeEtcdAddress))
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--multinode-host-address=%s", d.MultinodeHostAddress))
 	}
 
 	// prepare pipe for ready notification

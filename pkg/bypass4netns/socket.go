@@ -177,9 +177,9 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		}
 	}
 
-	if handler.overlay.Enable && destAddr.IP.IsPrivate() {
-		// currently, only private addresses are available in overlay network.
-		res, err := handler.overlay.etcdKeyApi.Get(gocontext.TODO(), destAddr.String(), nil)
+	if handler.multinode.Enable && destAddr.IP.IsPrivate() {
+		// currently, only private addresses are available in multinode communication.
+		res, err := handler.multinode.etcdKeyApi.Get(gocontext.TODO(), ETCD_MULTINODE_PREFIX+destAddr.String(), nil)
 		if err != nil {
 			ss.logger.Warnf("destination address %q is not registered", destAddr.String())
 		} else {

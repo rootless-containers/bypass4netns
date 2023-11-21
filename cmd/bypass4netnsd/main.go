@@ -21,13 +21,13 @@ import (
 )
 
 var (
-	socketFile         string
-	comSocketFile      string // socket for channel with bypass4netns
-	pidFile            string
-	logFilePath        string
-	b4nnPath           string
-	overlayEtcd        string
-	overlayHostAddress string
+	socketFile           string
+	comSocketFile        string // socket for channel with bypass4netns
+	pidFile              string
+	logFilePath          string
+	b4nnPath             string
+	multinodeEtcdAddress string
+	multinodeHostAddress string
 )
 
 func main() {
@@ -47,10 +47,10 @@ func main() {
 	flag.StringVar(&pidFile, "pid-file", "", "Pid file")
 	flag.StringVar(&logFilePath, "log-file", "", "Output logs to file")
 	flag.StringVar(&b4nnPath, "b4nn-executable", defaultB4nnPath, "Path to bypass4netns executable")
-	flag.StringVar(&overlayEtcd, "overlay-etcd", "", "Etcd address for overlay network")
-	flag.StringVar(&overlayHostAddress, "overlay-host-address", "", "Host address for overlay network")
-	disableTracer := flag.Bool("disable-tracer", false, "Disable connection tracer")
-	overlayEnable := flag.Bool("overlay-enable", false, "Enable overlay network")
+	flag.StringVar(&multinodeEtcdAddress, "multinode-etcd-address", "", "Etcd address for multinode communication")
+	flag.StringVar(&multinodeHostAddress, "multinode-host-address", "", "Host address for multinode communication")
+	tracerEnable := flag.Bool("tracer", false, "Enable connection tracer")
+	multinodeEnable := flag.Bool("multinode", false, "Enable multinode communication")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
 	help := flag.Bool("help", false, "Show help")
@@ -114,22 +114,22 @@ func main() {
 
 	b4nsdDriver := bypass4netnsd.NewDriver(b4nnPath, comSocketFile)
 
-	if *disableTracer {
-		logrus.Info("Connection tracer is disabled")
-		b4nsdDriver.DisableTracer = *disableTracer
+	if *tracerEnable {
+		logrus.Info("Connection tracer is enabled")
+		b4nsdDriver.TracerEnable = *tracerEnable
 	}
 
-	if *overlayEnable {
-		if overlayEtcd == "" {
-			logrus.Fatal("--overlay-etcd is not specified")
+	if *multinodeEnable {
+		if multinodeEtcdAddress == "" {
+			logrus.Fatal("--multinode-etcd-address is not specified")
 		}
-		if overlayHostAddress == "" {
-			logrus.Fatal("--overlay-host-address is not specified")
+		if multinodeHostAddress == "" {
+			logrus.Fatal("--multinode-host-address is not specified")
 		}
-		b4nsdDriver.OverlayEnable = *overlayEnable
-		b4nsdDriver.OverlayEtcd = overlayEtcd
-		b4nsdDriver.OverlayHostAddress = overlayHostAddress
-		logrus.Infof("Overlay network is enabled. etcd address is %q host address is %q", b4nsdDriver.OverlayEtcd, b4nsdDriver.OverlayHostAddress)
+		b4nsdDriver.MultinodeEnable = *multinodeEnable
+		b4nsdDriver.MultinodeEtcdAddress = multinodeEtcdAddress
+		b4nsdDriver.MultinodeHostAddress = multinodeHostAddress
+		logrus.WithFields(logrus.Fields{"etcdAddress": multinodeEtcdAddress, "hostAddress": multinodeHostAddress}).Info("Multinode communication is enabled.")
 	}
 
 	waitChan := make(chan bool)

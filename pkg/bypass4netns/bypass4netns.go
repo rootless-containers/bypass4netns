@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/etcd/client"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
 	"github.com/rootless-containers/bypass4netns/pkg/api/com"
@@ -19,9 +20,10 @@ import (
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
-	"go.etcd.io/etcd/client"
 	"golang.org/x/sys/unix"
 )
+
+const ETCD_MULTINODE_PREFIX = "bypass4netns/multinode/"
 
 func closeStateFds(recvFds []int) {
 	for i := range recvFds {
@@ -451,7 +453,7 @@ func (h *Handler) SetReadyFd(fd int) error {
 	return nil
 }
 
-type OverlayConfig struct {
+type MultinodeConfig struct {
 	Enable           bool
 	EtcdAddress      string
 	HostAddress      string
@@ -473,8 +475,8 @@ type notifHandler struct {
 	// key is destination address e.g. "192.168.1.1:1000"
 	containerInterfaces map[string]containerInterface
 	tracer              *tracer.Tracer
-	disableTracer       bool
-	overlay             *OverlayConfig
+	tracerEnable        bool
+	multinode           *MultinodeConfig
 }
 
 type containerInterface struct {
@@ -503,7 +505,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 }
 
 // StartHandle starts seccomp notif handler
-func (h *Handler) StartHandle(disableTracer bool, overlayConfig *OverlayConfig) {
+func (h *Handler) StartHandle(enableTracer bool, multinodeConfig *MultinodeConfig) {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
@@ -542,23 +544,23 @@ func (h *Handler) StartHandle(disableTracer bool, overlayConfig *OverlayConfig) 
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
-		notifHandler.disableTracer = disableTracer
-		notifHandler.overlay = overlayConfig
-		if notifHandler.overlay.Enable {
-			notifHandler.overlay.etcdClientConfig = client.Config{
-				Endpoints:               []string{notifHandler.overlay.EtcdAddress},
+		notifHandler.tracerEnable = enableTracer
+		notifHandler.multinode = multinodeConfig
+		if notifHandler.multinode.Enable {
+			notifHandler.multinode.etcdClientConfig = client.Config{
+				Endpoints:               []string{notifHandler.multinode.EtcdAddress},
 				Transport:               client.DefaultTransport,
 				HeaderTimeoutPerRequest: 2 * time.Second,
 			}
-			notifHandler.overlay.etcdClient, err = client.New(notifHandler.overlay.etcdClientConfig)
+			notifHandler.multinode.etcdClient, err = client.New(notifHandler.multinode.etcdClientConfig)
 			if err != nil {
 				logrus.WithError(err).Fatal("failed to create etcd client")
 			}
-			notifHandler.overlay.etcdKeyApi = client.NewKeysAPI(notifHandler.overlay.etcdClient)
+			notifHandler.multinode.etcdKeyApi = client.NewKeysAPI(notifHandler.multinode.etcdClient)
 		}
 
 		// prepare tracer agent
-		if !notifHandler.disableTracer && !notifHandler.overlay.Enable {
+		if notifHandler.tracerEnable && !notifHandler.multinode.Enable {
 			err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
 			if err != nil {
 				logrus.WithError(err).Fatalf("failed to start tracer")
@@ -592,16 +594,16 @@ func (h *Handler) StartHandle(disableTracer bool, overlayConfig *OverlayConfig) 
 			logrus.Infof("tracer is disabled")
 		}
 
-		go notifHandler.handle()
-		if notifHandler.overlay.Enable {
-			go notifHandler.startBackgroundTaskForOverlayNetwork()
-		} else {
-			go notifHandler.startBackgroundTask(h.comSocketPath)
+		if notifHandler.multinode.Enable {
+			go notifHandler.startBackgroundMultinodeTask()
+		} else if notifHandler.tracerEnable {
+			go notifHandler.startBackgroundTracerTask(h.comSocketPath)
 		}
+		go notifHandler.handle()
 	}
 }
 
-func (h *notifHandler) startBackgroundTask(comSocketPath string) {
+func (h *notifHandler) startBackgroundTracerTask(comSocketPath string) {
 	logrus.Info("Started bypass4netns background task")
 	comClient, err := com.NewComClient(comSocketPath)
 	if err != nil {
@@ -657,7 +659,7 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 							containerIf[dstAddr] = contIf
 							continue
 						}
-						if !h.disableTracer {
+						if h.tracerEnable {
 							addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
 							if err != nil {
 								logrus.WithError(err).Debugf("failed to connect to %s", dstAddr)
@@ -667,8 +669,8 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 								logrus.Debugf("failed to connect to %s", dstAddr)
 								continue
 							}
+							logrus.Debugf("successfully connected to %s", dstAddr)
 						}
-						logrus.Debugf("successfully connected to %s", dstAddr)
 						containerIf[dstAddr] = containerInterface{
 							containerID:     cont.ContainerID,
 							hostPort:        hostPort,
@@ -685,7 +687,7 @@ func (h *notifHandler) startBackgroundTask(comSocketPath string) {
 	}
 }
 
-func (h *notifHandler) startBackgroundTaskForOverlayNetwork() {
+func (h *notifHandler) startBackgroundMultinodeTask() {
 	ifLastUpdateUnix := int64(0)
 	for {
 		lastUpdated := h.nonBypassable.GetLastUpdateUnix()
@@ -702,13 +704,13 @@ func (h *notifHandler) startBackgroundTaskForOverlayNetwork() {
 					}
 					for _, v := range h.forwardingPorts {
 						containerAddr := fmt.Sprintf("%s:%d", addr.IP, v.ChildPort)
-						hostAddr := fmt.Sprintf("%s:%d", h.overlay.HostAddress, v.HostPort)
+						hostAddr := fmt.Sprintf("%s:%d", h.multinode.HostAddress, v.HostPort)
 						// Remove entries with timeout
 						// TODO: Remove related entries when exiting.
 						opts := &client.SetOptions{
 							TTL: time.Second * 15,
 						}
-						_, err := h.overlay.etcdKeyApi.Set(gocontext.TODO(), containerAddr, hostAddr, opts)
+						_, err := h.multinode.etcdKeyApi.Set(gocontext.TODO(), ETCD_MULTINODE_PREFIX+containerAddr, hostAddr, opts)
 						if err != nil {
 							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
 						} else {

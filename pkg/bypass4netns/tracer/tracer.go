@@ -49,7 +49,7 @@ func (x *Tracer) StartTracer(ctx context.Context, pid int) error {
 	if !ok {
 		nsenterFlags = append(nsenterFlags, "-U", "--preserve-credentials")
 	}
-	nsenterFlags = append(nsenterFlags, "--", selfExe, "--tracer", "--log-file", x.logPath)
+	nsenterFlags = append(nsenterFlags, "--", selfExe, "--tracer-agent", "--log-file", x.logPath)
 	x.tracerCmd = exec.CommandContext(ctx, nsenter, nsenterFlags...)
 	x.tracerCmd.SysProcAttr = &unix.SysProcAttr{
 		Pdeathsig: unix.SIGTERM,
