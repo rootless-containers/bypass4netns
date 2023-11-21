@@ -22,9 +22,11 @@ cat <<EOF
         "bind",
         "close",
         "connect",
-        "sendmsg",
-        "sendto",
-        "setsockopt"
+        "setsockopt",
+        "fcntl",
+        "_exit",
+        "exit_group",
+        "getpeername"
       ],
       "action": "SCMP_ACT_NOTIFY"
     }

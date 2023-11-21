@@ -19,18 +19,31 @@ Vagrant.configure("2") do |config|
     #!/bin/bash
     set -eu -o pipefail
 
-    NERDCTL_VERSION="0.22.2"
+    GO_VERSION="1.21.4"
+    NERDCTL_VERSION="1.7.0"
     ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
     echo "===== Prepare ====="
     (
      set -x
      sudo apt-get update
-     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap golang python3
+     sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config
      systemctl --user start dbus
 
-     curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxzv /usr/local
+     curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | sudo tar Cxz /usr/local
+     echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.profile
+     source ~/.profile
+
+     curl -fsSL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz | sudo tar Cxz /usr/local
      containerd-rootless-setuptool.sh install
      containerd-rootless-setuptool.sh install-buildkit
+
+     # build nerdctl with bypass4netns
+     curl -fsSL https://github.com/containerd/nerdctl/archive/refs/tags/v${NERDCTL_VERSION}.tar.gz | tar Cxz ~/
+     cd ~/nerdctl-${NERDCTL_VERSION}
+     echo "replace github.com/rootless-containers/bypass4netns => /vagrant" >> go.mod
+     make
+     sudo rm -f /usr/local/bin/nerdctl
+     sudo cp _output/nerdctl /usr/local/bin/nerdctl
      nerdctl info
      nerdctl pull --quiet "${ALPINE_IMAGE}"
 
@@ -45,7 +58,7 @@ Vagrant.configure("2") do |config|
      systemd-run --user --unit run-iperf3 iperf3 -s
     )
 
-    echo "===== `--ignore` option test ====="
+    echo "===== '--ignore' option test ====="
     (
      set -x
      systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8,192.168.6.0/24" --debug
@@ -53,7 +66,7 @@ Vagrant.configure("2") do |config|
      nerdctl exec test apk add --no-cache iperf3
      nerdctl exec test iperf3 -c $(cat /tmp/host_ip)
      # TODO: this check is dirty. we want better method to check the connect(2) is ignored.
-     journalctl --user -u run-bypass4netns.service | grep "is ignored, skipping."
+     journalctl --user -u run-bypass4netns.service | grep "is not bypassed"
      nerdctl rm -f test
      systemctl --user stop run-bypass4netns.service
 
@@ -71,6 +84,7 @@ Vagrant.configure("2") do |config|
     echo "===== Test bypass4netnsd ====="
     (
      set -x
+     source ~/.profile
      /vagrant/test/test_b4nnd.sh
     )
 
