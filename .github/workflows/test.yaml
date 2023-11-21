@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - master
+      - ng-b4ns
       - 'release/**'
   pull_request:
 jobs:
