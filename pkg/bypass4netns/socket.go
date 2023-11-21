@@ -97,14 +97,14 @@ func newSocketStatus(pid uint32, sockfd int, sockDomain, sockType, sockProto int
 	}
 }
 
-func (ss *socketStatus) handleSysSetsockopt(ctx *context) error {
+func (ss *socketStatus) handleSysSetsockopt(ctx *context) {
 	ss.logger.Debug("handle setsockopt")
 	level := ctx.req.Data.Args[1]
 	optname := ctx.req.Data.Args[2]
 	optlen := ctx.req.Data.Args[4]
 	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
 	if err != nil {
-		return fmt.Errorf("readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+		ss.logger.Errorf("setsockopt readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
 	}
 
 	value := socketOption{
@@ -116,7 +116,6 @@ func (ss *socketStatus) handleSysSetsockopt(ctx *context) error {
 	ss.socketOptions = append(ss.socketOptions, value)
 
 	ss.logger.Debugf("setsockopt level=%d optname=%d optval=%v optlen=%d was recorded.", level, optname, optval, optlen)
-	return nil
 }
 
 func (ss *socketStatus) handleSysFcntl(ctx *context) {

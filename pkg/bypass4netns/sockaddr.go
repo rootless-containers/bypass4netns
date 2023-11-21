@@ -79,7 +79,10 @@ func (sa *sockaddr) toBytes() ([]byte, error) {
 		copy(addr4.Addr[:], sa.IP.To4()[:])
 
 		addr4.Port = endian.Uint16(p)
-		binary.Write(&res, endian, addr4)
+		err := binary.Write(&res, endian, addr4)
+		if err != nil {
+			return nil, err
+		}
 	case syscall.AF_INET6:
 		addr6 := syscall.RawSockaddrInet6{}
 		addr6.Family = syscall.AF_INET6
@@ -88,7 +91,10 @@ func (sa *sockaddr) toBytes() ([]byte, error) {
 		addr6.Port = endian.Uint16(p)
 		addr6.Flowinfo = sa.Flowinfo
 		addr6.Scope_id = sa.ScopeID
-		binary.Write(&res, endian, addr6)
+		err := binary.Write(&res, endian, addr6)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("expected AF_INET or AF_INET6, got %d", sa.Family)
 	}
