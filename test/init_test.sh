@@ -20,7 +20,12 @@ echo "===== Prepare ====="
   sudo chown -R $TEST_USER:$TEST_USER ~/bypass4netns
 
   sudo apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config iptables
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config iptables etcd
+  sudo systemctl stop etcd
+  sudo systemctl disable etcd
+  HOST_IP=$(hostname -I | sed 's/ //')
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
+
   systemctl --user start dbus
 
   curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | sudo tar Cxz /usr/local
@@ -60,7 +65,4 @@ EOF
   hostname -I | awk '{print $1}' | tee /tmp/host_ip
   ~/bypass4netns/test/seccomp.json.sh | tee /tmp/seccomp.json
 
-
-
-  systemd-run --user --unit run-iperf3 iperf3 -s
 )
