@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 
 	"github.com/rootless-containers/bypass4netns/pkg/util"
 	"golang.org/x/sys/unix"
@@ -18,11 +19,14 @@ type Tracer struct {
 	tracerCmd *exec.Cmd
 	reader    io.Reader
 	writer    io.Writer
+
+	lock sync.Mutex
 }
 
 func NewTracer(logPath string) *Tracer {
 	return &Tracer{
 		logPath: logPath,
+		lock:    sync.Mutex{},
 	}
 }
 
@@ -97,6 +101,9 @@ func (x *Tracer) RegisterForwardPorts(ports []int) error {
 }
 
 func (x *Tracer) ConnectToAddress(addrs []string) ([]string, error) {
+	x.lock.Lock()
+	defer x.lock.Unlock()
+
 	cmd := TracerCommand{
 		Cmd:                ConnectToAddress,
 		DestinationAddress: addrs,

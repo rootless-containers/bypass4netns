@@ -495,7 +495,6 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
 		processes:       map[uint32]*processStatus{},
-		tracer:          tracer.NewTracer(h.tracerAgentLogPath),
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate
@@ -525,6 +524,9 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 		}
 		syscall.Close(h.readyFd)
 	}
+
+	// prepare tracer agent
+	var tracerAgent *tracer.Tracer = nil
 
 	for {
 		conn, err := l.Accept()
@@ -563,9 +565,11 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 			notifHandler.multinode.etcdKeyApi = client.NewKeysAPI(notifHandler.multinode.etcdClient)
 		}
 
-		// prepare tracer agent
-			err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
+		// not to run multiple tracerAgent.
+		// TODO: prepare only one tracerAgent in Handler
 		if c2cConfig.TracerEnable && !multinodeConfig.Enable && tracerAgent == nil {
+			tracerAgent = tracer.NewTracer(h.tracerAgentLogPath)
+			err = tracerAgent.StartTracer(gocontext.TODO(), state.Pid)
 			if err != nil {
 				logrus.WithError(err).Fatalf("failed to start tracer")
 			}
@@ -573,7 +577,7 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 			for _, v := range notifHandler.forwardingPorts {
 				fwdPorts = append(fwdPorts, v.ChildPort)
 			}
-			err = notifHandler.tracer.RegisterForwardPorts(fwdPorts)
+			err = tracerAgent.RegisterForwardPorts(fwdPorts)
 			if err != nil {
 				logrus.WithError(err).Fatalf("failed to register port")
 			}
@@ -582,7 +586,7 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 			// check tracer agent is ready
 			for _, v := range fwdPorts {
 				dst := fmt.Sprintf("127.0.0.1:%d", v)
-				addr, err := notifHandler.tracer.ConnectToAddress([]string{dst})
+				addr, err := tracerAgent.ConnectToAddress([]string{dst})
 				if err != nil {
 					logrus.WithError(err).Warnf("failed to connect to %s", dst)
 					continue
@@ -598,16 +602,17 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 			logrus.Infof("tracer is disabled")
 		}
 
+		// TODO: these goroutines shoud be launched only once.
 		if notifHandler.multinode.Enable {
 			go notifHandler.startBackgroundMultinodeTask()
-		} else if notifHandler.tracerEnable {
-			go notifHandler.startBackgroundTracerTask(h.comSocketPath)
+		} else if notifHandler.c2cConnections.Enable {
+			go notifHandler.startBackgroundC2CConnectionHandleTask(h.comSocketPath, tracerAgent)
 		}
 		go notifHandler.handle()
 	}
 }
 
-func (h *notifHandler) startBackgroundTracerTask(comSocketPath string) {
+func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath string, tracerAgent *tracer.Tracer) {
 	logrus.Info("Started bypass4netns background task")
 	comClient, err := com.NewComClient(comSocketPath)
 	if err != nil {
