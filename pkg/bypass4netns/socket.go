@@ -178,9 +178,10 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 
 	if handler.multinode.Enable && destAddr.IP.IsPrivate() {
 		// currently, only private addresses are available in multinode communication.
+		key := ETCD_MULTINODE_PREFIX + destAddr.String()
 		res, err := handler.multinode.etcdKeyApi.Get(gocontext.TODO(), ETCD_MULTINODE_PREFIX+destAddr.String(), nil)
 		if err != nil {
-			ss.logger.Warnf("destination address %q is not registered", destAddr.String())
+			ss.logger.WithError(err).Warnf("destination address %q is not registered", key)
 		} else {
 			hostAddrWithPort := res.Node.Value
 			hostAddrs := strings.Split(hostAddrWithPort, ":")
@@ -201,7 +202,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 			connectToOtherBypassedContainer = true
 			ss.logger.Infof("destination address %v is container address and bypassed via overlay network", destAddr)
 		}
-	} else {
+	} else if handler.c2cConnections.Enable {
 		contIf, ok := handler.containerInterfaces[destAddr.String()]
 		if ok {
 			ss.logger.Infof("destination address %v is container address and bypassed", destAddr)

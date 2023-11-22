@@ -462,6 +462,11 @@ type MultinodeConfig struct {
 	etcdKeyApi       client.KeysAPI
 }
 
+type C2CConnectionHandleConfig struct {
+	Enable       bool
+	TracerEnable bool
+}
+
 type notifHandler struct {
 	fd                      libseccomp.ScmpFd
 	state                   *specs.ContainerProcessState
@@ -474,8 +479,7 @@ type notifHandler struct {
 
 	// key is destination address e.g. "192.168.1.1:1000"
 	containerInterfaces map[string]containerInterface
-	tracer              *tracer.Tracer
-	tracerEnable        bool
+	c2cConnections      *C2CConnectionHandleConfig
 	multinode           *MultinodeConfig
 }
 
@@ -505,7 +509,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 }
 
 // StartHandle starts seccomp notif handler
-func (h *Handler) StartHandle(enableTracer bool, multinodeConfig *MultinodeConfig) {
+func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeConfig *MultinodeConfig) {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
@@ -544,7 +548,7 @@ func (h *Handler) StartHandle(enableTracer bool, multinodeConfig *MultinodeConfi
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
-		notifHandler.tracerEnable = enableTracer
+		notifHandler.c2cConnections = c2cConfig
 		notifHandler.multinode = multinodeConfig
 		if notifHandler.multinode.Enable {
 			notifHandler.multinode.etcdClientConfig = client.Config{
@@ -560,8 +564,8 @@ func (h *Handler) StartHandle(enableTracer bool, multinodeConfig *MultinodeConfi
 		}
 
 		// prepare tracer agent
-		if notifHandler.tracerEnable && !notifHandler.multinode.Enable {
 			err = notifHandler.tracer.StartTracer(gocontext.TODO(), state.Pid)
+		if c2cConfig.TracerEnable && !multinodeConfig.Enable && tracerAgent == nil {
 			if err != nil {
 				logrus.WithError(err).Fatalf("failed to start tracer")
 			}
@@ -627,7 +631,7 @@ func (h *notifHandler) startBackgroundTracerTask(comSocketPath string) {
 			for _, v := range h.forwardingPorts {
 				containerIfs.ForwardingPorts[v.ChildPort] = v.HostPort
 			}
-			logrus.Infof("Interfaces = %v", containerIfs)
+			logrus.Debugf("Interfaces = %v", containerIfs)
 			_, err = comClient.PostInterface(gocontext.TODO(), containerIfs)
 			if err != nil {
 				logrus.WithError(err).Errorf("failed to post interfaces")
@@ -659,8 +663,8 @@ func (h *notifHandler) startBackgroundTracerTask(comSocketPath string) {
 							containerIf[dstAddr] = contIf
 							continue
 						}
-						if h.tracerEnable {
-							addrRes, err := h.tracer.ConnectToAddress([]string{dstAddr})
+						if h.c2cConnections.TracerEnable {
+							addrRes, err := tracerAgent.ConnectToAddress([]string{dstAddr})
 							if err != nil {
 								logrus.WithError(err).Debugf("failed to connect to %s", dstAddr)
 								continue
@@ -676,7 +680,7 @@ func (h *notifHandler) startBackgroundTracerTask(comSocketPath string) {
 							hostPort:        hostPort,
 							lastCheckedUnix: time.Now().Unix(),
 						}
-						logrus.Debugf("%s -> 127.0.0.1:%d is registered", dstAddr, hostPort)
+						logrus.Infof("%s -> 127.0.0.1:%d is registered", dstAddr, hostPort)
 					}
 				}
 			}
@@ -715,6 +719,10 @@ func (h *notifHandler) startBackgroundMultinodeTask() {
 							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
 						} else {
 							logrus.Infof("Registered %s -> %s", containerAddr, hostAddr)
+						}
+						err = h.multinode.etcdClient.Sync(gocontext.TODO())
+						if err != nil {
+							logrus.WithError(err).Errorf("failed to sync etcdClient")
 						}
 					}
 				}

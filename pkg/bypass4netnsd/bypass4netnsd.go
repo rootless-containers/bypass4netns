@@ -23,6 +23,7 @@ type Driver struct {
 	lock                 sync.RWMutex
 	containerInterfaces  map[string]com.ContainerInterfaces
 	interfacesLock       sync.RWMutex
+	HandleC2CEnable      bool
 	TracerEnable         bool
 	MultinodeEnable      bool
 	MultinodeEtcdAddress string
@@ -87,6 +88,9 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 	}
 
 	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
+	if d.HandleC2CEnable {
+		b4nnArgs = append(b4nnArgs, "--handle-c2c-connections")
+	}
 	if d.TracerEnable {
 		b4nnArgs = append(b4nnArgs, "--tracer=true")
 	}

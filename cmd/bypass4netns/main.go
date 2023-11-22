@@ -55,6 +55,7 @@ func main() {
 	help := flag.Bool("help", false, "Show help")
 	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)")          // TODO: hide
 	tracerAgentFlag := flag.Bool("tracer-agent", false, "(An internal flag. Do not use manually.)") // TODO: hide
+	handleC2cEnable := flag.Bool("handle-c2c-connections", false, "Handle connections between containers")
 	tracerEnable := flag.Bool("tracer", false, "Enable connection tracer")
 	multinodeEnable := flag.Bool("multinode", false, "Enable multinode communication")
 
@@ -108,9 +109,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *tracerEnable {
+	if *handleC2cEnable {
 		if comSocketFile == "" {
 			logrus.Fatal("--com-socket is not specified")
+		}
+	}
+
+	if *tracerEnable {
+		if !*handleC2cEnable {
+			logrus.Fatal("--handle-c2c-connections is not enabled")
 		}
 	}
 
@@ -229,10 +236,14 @@ func main() {
 		os.Exit(0)
 	}()
 
+	c2cConfig := &bypass4netns.C2CConnectionHandleConfig{
+		Enable:       *handleC2cEnable,
+		TracerEnable: *tracerEnable,
+	}
 	multinode := &bypass4netns.MultinodeConfig{
 		Enable:      *multinodeEnable,
 		EtcdAddress: multinodeEtcdAddress,
 		HostAddress: multinodeHostAddress,
 	}
-	handler.StartHandle(*tracerEnable, multinode)
+	handler.StartHandle(c2cConfig, multinode)
 }

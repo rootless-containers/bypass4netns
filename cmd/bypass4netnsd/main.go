@@ -50,6 +50,7 @@ func main() {
 	flag.StringVar(&multinodeEtcdAddress, "multinode-etcd-address", "", "Etcd address for multinode communication")
 	flag.StringVar(&multinodeHostAddress, "multinode-host-address", "", "Host address for multinode communication")
 	tracerEnable := flag.Bool("tracer", false, "Enable connection tracer")
+	handleC2cEnable := flag.Bool("handle-c2c-connections", false, "Handle connections between containers")
 	multinodeEnable := flag.Bool("multinode", false, "Enable multinode communication")
 	debug := flag.Bool("debug", false, "Enable debug mode")
 	version := flag.Bool("version", false, "Show version")
@@ -114,7 +115,19 @@ func main() {
 
 	b4nsdDriver := bypass4netnsd.NewDriver(b4nnPath, comSocketFile)
 
+	if *handleC2cEnable && *multinodeEnable {
+		logrus.Fatal("--handle-c2c-connections and multinode cannot be enabled at the sametime")
+	}
+
+	if *handleC2cEnable {
+		logrus.Info("Handling connections between containers")
+		b4nsdDriver.HandleC2CEnable = *handleC2cEnable
+	}
+
 	if *tracerEnable {
+		if !*handleC2cEnable {
+			logrus.Fatal("--handle-c2c-connections is not enabled")
+		}
 		logrus.Info("Connection tracer is enabled")
 		b4nsdDriver.TracerEnable = *tracerEnable
 	}
