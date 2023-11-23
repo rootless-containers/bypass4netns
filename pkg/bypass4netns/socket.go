@@ -170,7 +170,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		if destAddr.IP.IsLoopback() {
 			ss.logger.Infof("destination address %v is loopback and bypassed", destAddr)
 			connectToLoopback = true
-		} else if handler.nonBypassable.IsInterfaceIPAddress(destAddr.IP) {
+		} else if contIf, ok := handler.containerInterfaces[destAddr.String()]; ok && contIf.containerID == handler.state.State.ID {
 			ss.logger.Infof("destination address %v is interface's address and bypassed", destAddr)
 			connectToInterface = true
 		}

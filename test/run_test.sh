@@ -10,9 +10,22 @@ nerdctl pull --quiet "${ALPINE_IMAGE}"
 SCRIPT_DIR=$(cd $(dirname $0); pwd)
 cd $SCRIPT_DIR
 
-rm -rf ~/bypass4netns
-sudo cp -r /host ~/bypass4netns
-sudo chown -R ubuntu:ubuntu ~/bypass4netns
+set +u
+
+if [ ! -v 1 ]; then
+  echo "COPY"
+  rm -rf ~/bypass4netns
+  sudo cp -r /host ~/bypass4netns
+  sudo chown -R ubuntu:ubuntu ~/bypass4netns
+  cd ~/bypass4netns
+  exec $0 "FORK"
+  exit 0
+fi
+
+set -u
+
+echo "THIS IS FORK"
+
 cd ~/bypass4netns
 rm -f bypass4netns bypass4netnsd
 make
@@ -21,6 +34,8 @@ cd $SCRIPT_DIR
 
 set +e
 systemctl --user stop run-iperf3
+systemctl --user reset-failed
+sleep 1
 set -e
 
 systemd-run --user --unit run-iperf3 iperf3 -s
@@ -156,7 +171,6 @@ echo "===== multinode test (single node) ===="
   nerdctl exec test2 apk add --no-cache iperf3
   # wait the key is propagated to etcd
   # TODO: why it takes so much time?
-  sleep 15
   nerdctl exec test2 iperf3 -c $TEST1_ADDR -t 1 --connect-timeout 1000 # it must success to connect.
 
   nerdctl rm -f test1
@@ -167,44 +181,61 @@ echo "===== multinode test (single node) ===="
 
 echo "===== Benchmark: netns -> host With bypass4netns ====="
 (
- set -x
+  set +e
+  nerdctl rm -f test
+  systemctl --user stop run-bypass4netnsd
+  systemctl --user reset-failed
+  set -ex
 
- # start bypass4netnsd for nerdctl integration
- systemd-run --user --unit run-bypass4netnsd bypass4netnsd
- sleep 1
- nerdctl run --label nerdctl/bypass4netns=true -d --name test "${ALPINE_IMAGE}" sleep infinity
- nerdctl exec test apk add --no-cache iperf3
- nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
- nerdctl rm -f test
+  # start bypass4netnsd for nerdctl integration
+  systemd-run --user --unit run-bypass4netnsd bypass4netnsd
+  sleep 1
+  nerdctl run --label nerdctl/bypass4netns=true -d --name test "${ALPINE_IMAGE}" sleep infinity
+  nerdctl exec test apk add --no-cache iperf3
+  nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
+  nerdctl rm -f test
 )
 
 echo "===== Benchmark: netns -> host Without bypass4netns (for comparison) ====="
 (
- set -x
- nerdctl run -d --name test "${ALPINE_IMAGE}" sleep infinity
- nerdctl exec test apk add --no-cache iperf3
- nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
- nerdctl rm -f test
+  set +e
+  nerdctl rm -f test
+  set -ex
+
+  nerdctl run -d --name test "${ALPINE_IMAGE}" sleep infinity
+  nerdctl exec test apk add --no-cache iperf3
+  nerdctl exec test iperf3 -c "$(cat /tmp/host_ip)"
+  nerdctl rm -f test
 )
 
 echo "===== Benchmark: host -> netns With bypass4netns ====="
 (
- set -x
- nerdctl run --label nerdctl/bypass4netns=true -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
- nerdctl exec test apk add --no-cache iperf3
- systemd-run --user --unit run-iperf3-netns nerdctl exec test iperf3 -s -4
- sleep 1 # waiting `iperf3 -s -4` becomes ready
- iperf3 -c "$(cat /tmp/host_ip)" -p 8080
- nerdctl rm -f test
+  set +e
+  nerdctl rm -f test
+  systemctl --user stop run-iperf3-netns
+  systemctl --user reset-failed
+  set -ex
+
+  nerdctl run --label nerdctl/bypass4netns=true -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl exec test apk add --no-cache iperf3
+  systemd-run --user --unit run-iperf3-netns nerdctl exec test iperf3 -s -4
+  sleep 1 # waiting `iperf3 -s -4` becomes ready
+  iperf3 -c "$(cat /tmp/host_ip)" -p 8080
+  nerdctl rm -f test
 )
 
 echo "===== Benchmark: host -> netns Without bypass4netns (for comparison) ====="
 (
- set -x
- nerdctl run -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
- nerdctl exec test apk add --no-cache iperf3
- systemd-run --user --unit run-iperf3-netns2 nerdctl exec test iperf3 -s -4
- sleep 1
- iperf3 -c "$(cat /tmp/host_ip)" -p 8080
- nerdctl rm -f test
+  set +e
+  nerdctl rm -f test
+  systemctl --user stop run-iperf3-netns2
+  systemctl --user reset-failed
+  set -ex
+
+  nerdctl run -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl exec test apk add --no-cache iperf3
+  systemd-run --user --unit run-iperf3-netns2 nerdctl exec test iperf3 -s -4
+  sleep 1
+  iperf3 -c "$(cat /tmp/host_ip)" -p 8080
+  nerdctl rm -f test
 )

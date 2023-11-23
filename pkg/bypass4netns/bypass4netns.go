@@ -16,6 +16,7 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
 	"github.com/rootless-containers/bypass4netns/pkg/api/com"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/iproute2"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
 	libseccomp "github.com/seccomp/libseccomp-golang"
@@ -472,7 +473,9 @@ type notifHandler struct {
 	state                   *specs.ContainerProcessState
 	nonBypassable           *nonbypassable.NonBypassable
 	nonBypassableAutoUpdate bool
-	forwardingPorts         map[int]ForwardPortMapping
+
+	// key is child port
+	forwardingPorts map[int]ForwardPortMapping
 
 	// key is pid
 	processes map[uint32]*processStatus
@@ -625,9 +628,17 @@ func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath stri
 	logrus.Infof("Successfully connected to bypass4netnsd")
 	ifLastUpdateUnix := int64(0)
 	for {
-		lastUpdated := h.nonBypassable.GetLastUpdateUnix()
-		if lastUpdated > ifLastUpdateUnix {
-			ifs := h.nonBypassable.GetInterfaces()
+		if ifLastUpdateUnix+10 < time.Now().Unix() {
+			addrs, err := iproute2.GetAddressesInNetNS(gocontext.TODO(), h.state.Pid)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to get addresses")
+				return
+			}
+			ifs, err := iproute2AddressesToComInterfaces(addrs)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to convert addresses")
+				return
+			}
 			containerIfs := &com.ContainerInterfaces{
 				ContainerID:     h.state.State.ID,
 				Interfaces:      ifs,
@@ -642,7 +653,7 @@ func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath stri
 				logrus.WithError(err).Errorf("failed to post interfaces")
 			} else {
 				logrus.Infof("successfully posted updated interfaces")
-				ifLastUpdateUnix = lastUpdated
+				ifLastUpdateUnix = time.Now().Unix()
 			}
 		}
 		containerInterfaces, err := comClient.ListInterfaces(gocontext.TODO())
@@ -696,23 +707,55 @@ func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath stri
 	}
 }
 
+func iproute2AddressesToComInterfaces(addrs iproute2.Addresses) ([]com.Interface, error) {
+	comIntfs := []com.Interface{}
+	for _, intf := range addrs {
+		comIntf := com.Interface{
+			Name:       intf.IfName,
+			Addresses:  []net.IPNet{},
+			IsLoopback: intf.LinkType == "loopback",
+		}
+		hwAddr, err := net.ParseMAC(intf.Address)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse HWAddress: %w", err)
+		}
+		comIntf.HWAddr = hwAddr
+		for _, addr := range intf.AddrInfos {
+			ip, ipNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", addr.Local, addr.PrefixLen))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse addr_info: %w", err)
+			}
+			ipNet.IP = ip
+			comIntf.Addresses = append(comIntf.Addresses, *ipNet)
+		}
+
+		comIntfs = append(comIntfs, comIntf)
+	}
+
+	return comIntfs, nil
+}
+
 func (h *notifHandler) startBackgroundMultinodeTask() {
 	ifLastUpdateUnix := int64(0)
 	for {
-		lastUpdated := h.nonBypassable.GetLastUpdateUnix()
-		if lastUpdated > ifLastUpdateUnix || ifLastUpdateUnix+10 < time.Now().Unix() {
-			ifs := h.nonBypassable.GetInterfaces()
+		if ifLastUpdateUnix+10 < time.Now().Unix() {
+			ifs, err := iproute2.GetAddressesInNetNS(gocontext.TODO(), h.state.Pid)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to get addresses")
+				return
+			}
 			for _, intf := range ifs {
-				if intf.IsLoopback {
+				// ignore non-ethernet interface
+				if intf.LinkType != "ether" {
 					continue
 				}
-				for _, addr := range intf.Addresses {
-					// ignore IPv6 address
-					if addr.IP.To4() == nil {
+				for _, addr := range intf.AddrInfos {
+					// ignore non-IPv4 address
+					if addr.Family != "inet" {
 						continue
 					}
 					for _, v := range h.forwardingPorts {
-						containerAddr := fmt.Sprintf("%s:%d", addr.IP, v.ChildPort)
+						containerAddr := fmt.Sprintf("%s:%d", addr.Local, v.ChildPort)
 						hostAddr := fmt.Sprintf("%s:%d", h.multinode.HostAddress, v.HostPort)
 						// Remove entries with timeout
 						// TODO: Remove related entries when exiting.
@@ -724,10 +767,6 @@ func (h *notifHandler) startBackgroundMultinodeTask() {
 							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
 						} else {
 							logrus.Infof("Registered %s -> %s", containerAddr, hostAddr)
-						}
-						err = h.multinode.etcdClient.Sync(gocontext.TODO())
-						if err != nil {
-							logrus.WithError(err).Errorf("failed to sync etcdClient")
 						}
 					}
 				}
