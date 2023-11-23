@@ -606,16 +606,24 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 		}
 
 		// TODO: these goroutines shoud be launched only once.
+		ready := make(chan bool, 10)
 		if notifHandler.multinode.Enable {
-			go notifHandler.startBackgroundMultinodeTask()
+			go notifHandler.startBackgroundMultinodeTask(ready)
 		} else if notifHandler.c2cConnections.Enable {
-			go notifHandler.startBackgroundC2CConnectionHandleTask(h.comSocketPath, tracerAgent)
+			go notifHandler.startBackgroundC2CConnectionHandleTask(ready, h.comSocketPath, tracerAgent)
+		} else {
+			ready <- true
 		}
+
+		// wait for background tasks becoming ready
+		<-ready
+		logrus.Info("background task is ready. start to handle")
 		go notifHandler.handle()
 	}
 }
 
-func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath string, tracerAgent *tracer.Tracer) {
+func (h *notifHandler) startBackgroundC2CConnectionHandleTask(ready chan bool, comSocketPath string, tracerAgent *tracer.Tracer) {
+	initDone := false
 	logrus.Info("Started bypass4netns background task")
 	comClient, err := com.NewComClient(comSocketPath)
 	if err != nil {
@@ -703,6 +711,12 @@ func (h *notifHandler) startBackgroundC2CConnectionHandleTask(comSocketPath stri
 		}
 		h.containerInterfaces = containerIf
 
+		// once the interfaces are registered, it is ready to handle connections
+		if !initDone {
+			initDone = true
+			ready <- true
+		}
+
 		time.Sleep(1 * time.Second)
 	}
 }
@@ -735,7 +749,8 @@ func iproute2AddressesToComInterfaces(addrs iproute2.Addresses) ([]com.Interface
 	return comIntfs, nil
 }
 
-func (h *notifHandler) startBackgroundMultinodeTask() {
+func (h *notifHandler) startBackgroundMultinodeTask(ready chan bool) {
+	initDone := false
 	ifLastUpdateUnix := int64(0)
 	for {
 		if ifLastUpdateUnix+10 < time.Now().Unix() {
@@ -772,7 +787,14 @@ func (h *notifHandler) startBackgroundMultinodeTask() {
 				}
 			}
 			ifLastUpdateUnix = time.Now().Unix()
+
+			// once the interfaces are registered, it is ready to handle connections
+			if !initDone {
+				initDone = true
+				ready <- true
+			}
 		}
+
 		time.Sleep(1 * time.Second)
 	}
 }
