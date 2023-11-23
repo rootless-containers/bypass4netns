@@ -169,8 +169,6 @@ echo "===== multinode test (single node) ===="
   nerdctl network create --subnet "10.4.1.0/24" net-2
   nerdctl run --net net-2 --label nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test2 apk add --no-cache iperf3
-  # wait the key is propagated to etcd
-  # TODO: why it takes so much time?
   nerdctl exec test2 iperf3 -c $TEST1_ADDR -t 1 --connect-timeout 1000 # it must success to connect.
 
   nerdctl rm -f test1
