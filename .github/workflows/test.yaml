@@ -47,4 +47,6 @@ jobs:
         run: sudo lxc exec test -- sudo --login --user ubuntu /host/test/init_test.sh
       - name: run tests
         run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/test/run_test.sh
+      - name: benchmark (redis)
+        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/redis.sh
 
