@@ -54,6 +54,10 @@ jobs:
         run: ./test/multinode.sh
       - name: benchmark (redis)
         run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/redis.sh
+      - name: benchmark (postgresql)
+        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/postgres.sh
       - name: multinode benchmark (redis)
         run: ./benchmark/redis_multinode.sh
+      - name: multinode benchmark (postgresql)
+        run: ./benchmark/postgres_multinode.sh
 
