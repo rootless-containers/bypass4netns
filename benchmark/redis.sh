@@ -32,10 +32,10 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl rm -f redis-client
   set -ex
 
-  nerdctl run -d -p 6379:6379 --name redis-server "${REDIS_IMAGE}"
+  nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
-  SERVER_IP=$(hostname -I)
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP
+  SERVER_IP=$(hostname -I | awk '{print $1}')
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
 )
@@ -51,12 +51,10 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-
-  # work around for https://github.com/naoki9911/bypass4netns/issues/1
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 6379:6379 --name redis-server --entrypoint '' "${REDIS_IMAGE}" redis-server
-  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client "${REDIS_IMAGE}" sleep infinity
-  SERVER_IP=$(hostname -I)
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP
+  nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
+  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
+  SERVER_IP=$(hostname -I | awk '{print $1}')
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
@@ -72,15 +70,14 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | sed 's/ //')
+  HOST_IP=$(hostname -I | awk '{print $1}')
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  # work around for https://github.com/naoki9911/bypass4netns/issues/1
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 6379:6379 --name redis-server --entrypoint '' "${REDIS_IMAGE}" redis-server
-  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client "${REDIS_IMAGE}" sleep infinity
+  nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
+  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
   # without 'sleep 1', benchmark is not performed.(race condition?)
-  nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP"
+  nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP -p 6379" 
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client

@@ -55,6 +55,7 @@ func main() {
 	help := flag.Bool("help", false, "Show help")
 	nsagentFlag := flag.Bool("nsagent", false, "(An internal flag. Do not use manually.)")          // TODO: hide
 	tracerAgentFlag := flag.Bool("tracer-agent", false, "(An internal flag. Do not use manually.)") // TODO: hide
+	memNSEnterPid := flag.Int("mem-nsenter-pid", -1, "(An internal flag. Do not use manually.)")    // TODO: hide
 	handleC2cEnable := flag.Bool("handle-c2c-connections", false, "Handle connections between containers")
 	tracerEnable := flag.Bool("tracer", false, "Enable connection tracer")
 	multinodeEnable := flag.Bool("multinode", false, "Enable multinode communication")
@@ -82,6 +83,14 @@ func main() {
 
 	if *help {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	if *memNSEnterPid > 0 {
+		logrus.SetOutput(os.Stdout)
+		if err := bypass4netns.OpenMemWithNSEnterAgent(uint32(*memNSEnterPid)); err != nil {
+			logrus.Fatal(err)
+		}
 		os.Exit(0)
 	}
 

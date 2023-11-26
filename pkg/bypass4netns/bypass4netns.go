@@ -4,11 +4,15 @@ package bypass4netns
 // The code is licensed under Apache-2.0 License
 
 import (
+	"bytes"
 	gocontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -19,6 +23,7 @@ import (
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/iproute2"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
+	"github.com/rootless-containers/bypass4netns/pkg/util"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -75,14 +80,13 @@ func parseStateFds(stateFds []string, recvFds []int) (uintptr, error) {
 }
 
 // readProcMem read data from memory of specified pid process at the spcified offset.
-func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
+func (h *notifHandler) readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
 	buffer := make([]byte, len) // PATH_MAX
 
-	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDONLY, 0o777)
+	memfd, err := h.openMem(pid)
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(memfd)
 
 	size, err := unix.Pread(memfd, buffer, int64(offset))
 	if err != nil {
@@ -93,12 +97,11 @@ func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
 }
 
 // writeProcMem writes data to memory of specified pid process at the specified offset.
-func writeProcMem(pid uint32, offset uint64, buf []byte) error {
-	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_WRONLY, 0o777)
+func (h *notifHandler) writeProcMem(pid uint32, offset uint64, buf []byte) error {
+	memfd, err := h.openMem(pid)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(memfd)
 
 	size, err := unix.Pwrite(memfd, buf, int64(offset))
 	if err != nil {
@@ -108,6 +111,116 @@ func writeProcMem(pid uint32, offset uint64, buf []byte) error {
 		return fmt.Errorf("data is not written successfully. expected size=%d actual size=%d", len(buf), size)
 	}
 
+	return nil
+}
+
+func (h *notifHandler) openMem(pid uint32) (int, error) {
+	if memfd, ok := h.memfds[pid]; ok {
+		return memfd, nil
+	}
+	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDWR, 0o777)
+	if err != nil {
+		logrus.WithField("pid", pid).Warn("failed to open mem due to permission error. retrying with agent.")
+		newMemfd, err := openMemWithNSEnter(pid)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open mem with agent (pid=%d)", pid)
+		}
+		logrus.WithField("pid", pid).Info("succeeded to open mem with agent. continue to process")
+		memfd = newMemfd
+	}
+	h.memfds[pid] = memfd
+
+	return memfd, nil
+}
+
+func openMemWithNSEnter(pid uint32) (int, error) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	// configure timeout
+	timeout := &syscall.Timeval{
+		Sec:  0,
+		Usec: 500 * 1000,
+	}
+	err = syscall.SetsockoptTimeval(fds[0], syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, timeout)
+	if err != nil {
+		return 0, fmt.Errorf("failed to set receive timeout")
+	}
+	err = syscall.SetsockoptTimeval(fds[1], syscall.SOL_SOCKET, syscall.SO_SNDTIMEO, timeout)
+	if err != nil {
+		return 0, fmt.Errorf("failed to set send timeout")
+	}
+
+	fd1File := os.NewFile(uintptr(fds[0]), "")
+	defer fd1File.Close()
+	fd1Conn, err := net.FileConn(fd1File)
+	if err != nil {
+		return 0, err
+	}
+	_ = fd1Conn
+
+	selfExe, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	nsenter, err := exec.LookPath("nsenter")
+	if err != nil {
+		return 0, err
+	}
+	nsenterFlags := []string{
+		"-t", strconv.Itoa(int(pid)),
+		"-F",
+	}
+	selfPid := os.Getpid()
+	ok, err := util.SameUserNS(int(pid), selfPid)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check sameUserNS(%d, %d)", pid, selfPid)
+	}
+	if !ok {
+		nsenterFlags = append(nsenterFlags, "-U", "--preserve-credentials")
+	}
+	nsenterFlags = append(nsenterFlags, "--", selfExe, fmt.Sprintf("--mem-nsenter-pid=%d", pid))
+	cmd := exec.CommandContext(gocontext.TODO(), nsenter, nsenterFlags...)
+	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(fds[1]), "")}
+	stdout := bytes.Buffer{}
+	cmd.Stdout = &stdout
+	err = cmd.Start()
+	if err != nil {
+		return 0, fmt.Errorf("failed to exec mem open agent %q", err)
+	}
+	memfd, recvMsgs, err := util.RecvMsg(fd1Conn)
+	if err != nil {
+		logrus.Infof("stdout=%q", stdout.String())
+		return 0, fmt.Errorf("failed to receive message")
+	}
+	logrus.Debugf("recvMsgs=%s", string(recvMsgs))
+	err = cmd.Wait()
+	if err != nil {
+		return 0, err
+	}
+
+	return memfd, nil
+}
+
+func OpenMemWithNSEnterAgent(pid uint32) error {
+	// fd 3 should be passed socket pair
+	fdFile := os.NewFile(uintptr(3), "")
+	defer fdFile.Close()
+	fdConn, err := net.FileConn(fdFile)
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to open conn")
+	}
+	memPath := fmt.Sprintf("/proc/%d/mem", pid)
+	memfd, err := unix.Open(memPath, unix.O_RDWR, 0o777)
+	if err != nil {
+		logrus.WithError(err).Fatalf("failed to open %s", memPath)
+	}
+	err = util.SendMsg(fdConn, memfd, []byte(fmt.Sprintf("opened %s", memPath)))
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to send message")
+	}
 	return nil
 }
 
@@ -203,8 +316,8 @@ func getSocketArgs(sockfd int) (int, int, int, error) {
 	return sock_domain, sock_type, sock_protocol, nil
 }
 
-func readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockaddr, error) {
-	buf, err := readProcMem(pid, offset, addrlen)
+func (h *notifHandler) readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockaddr, error) {
+	buf, err := h.readProcMem(pid, offset, addrlen)
 	if err != nil {
 		return nil, fmt.Errorf("failed readProcMem pid %v offset 0x%x: %s", pid, offset, err)
 	}
@@ -297,6 +410,10 @@ func (h *notifHandler) handleReq(ctx *context) {
 	// cleanup sockets when the process exit.
 	if syscallName == "_exit" || syscallName == "exit_group" {
 		delete(h.processes, ctx.req.Pid)
+		if memfd, ok := h.memfds[ctx.req.Pid]; ok {
+			syscall.Close(memfd)
+			delete(h.memfds, ctx.req.Pid)
+		}
 		logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid}).Debugf("process is removed")
 		return
 	}
@@ -319,7 +436,7 @@ func (h *notifHandler) handleReq(ctx *context) {
 	}
 
 	if syscallName == "getpeername" {
-		sock.handleSysGetpeername(ctx)
+		sock.handleSysGetpeername(h, ctx)
 	}
 
 	switch sock.state {
@@ -335,7 +452,7 @@ func (h *notifHandler) handleReq(ctx *context) {
 	case "connect":
 		sock.handleSysConnect(h, ctx)
 	case "setsockopt":
-		sock.handleSysSetsockopt(ctx)
+		sock.handleSysSetsockopt(h, ctx)
 	case "fcntl":
 		sock.handleSysFcntl(ctx)
 	case "getpeername":
@@ -484,6 +601,9 @@ type notifHandler struct {
 	containerInterfaces map[string]containerInterface
 	c2cConnections      *C2CConnectionHandleConfig
 	multinode           *MultinodeConfig
+
+	// cache /proc/<pid>/mem's fd to reduce latency. key is pid, value is fd
+	memfds map[uint32]int
 }
 
 type containerInterface struct {
@@ -498,6 +618,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
 		processes:       map[uint32]*processStatus{},
+		memfds:          map[uint32]int{},
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate

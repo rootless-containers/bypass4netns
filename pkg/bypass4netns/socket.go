@@ -97,12 +97,12 @@ func newSocketStatus(pid uint32, sockfd int, sockDomain, sockType, sockProto int
 	}
 }
 
-func (ss *socketStatus) handleSysSetsockopt(ctx *context) {
+func (ss *socketStatus) handleSysSetsockopt(handler *notifHandler, ctx *context) {
 	ss.logger.Debug("handle setsockopt")
 	level := ctx.req.Data.Args[1]
 	optname := ctx.req.Data.Args[2]
 	optlen := ctx.req.Data.Args[4]
-	optval, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
+	optval, err := handler.readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
 	if err != nil {
 		ss.logger.Errorf("setsockopt readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
 	}
@@ -138,7 +138,7 @@ func (ss *socketStatus) handleSysFcntl(ctx *context) {
 }
 
 func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
-	destAddr, err := readSockaddrFromProcess(ss.pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	destAddr, err := handler.readSockaddrFromProcess(ss.pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
 		ss.logger.Errorf("failed to read sockaddr from process: %q", err)
 		return
@@ -255,7 +255,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		binary.BigEndian.PutUint16(p, uint16(fwdPort.HostPort))
 		// writing host port at sock_addr's port offset
 		// TODO: should we return dummy value when getpeername(2) is called?
-		err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+2, p)
+		err = handler.writeProcMem(ss.pid, ctx.req.Data.Args[1]+2, p)
 		if err != nil {
 			ss.logger.Errorf("failed to rewrite destination port: %q", err)
 			ss.state = Error
@@ -270,10 +270,10 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 		switch destAddr.Family {
 		case syscall.AF_INET:
 			newDestAddr = newDestAddr.To4()
-			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, newDestAddr[0:4])
+			err = handler.writeProcMem(ss.pid, ctx.req.Data.Args[1]+4, newDestAddr[0:4])
 		case syscall.AF_INET6:
 			newDestAddr = newDestAddr.To16()
-			err = writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, newDestAddr[0:16])
+			err = handler.writeProcMem(ss.pid, ctx.req.Data.Args[1]+8, newDestAddr[0:16])
 		default:
 			ss.logger.Errorf("unexpected destination address family %d", destAddr.Family)
 			ss.state = Error
@@ -293,7 +293,7 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 }
 
 func (ss *socketStatus) handleSysBind(handler *notifHandler, ctx *context) {
-	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+	sa, err := handler.readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
 		ss.logger.Errorf("failed to read sockaddr from process: %q", err)
 		ss.state = NotBypassable
@@ -378,7 +378,7 @@ func (ss *socketStatus) handleSysBind(handler *notifHandler, ctx *context) {
 	ctx.resp.Flags &= (^uint32(SeccompUserNotifFlagContinue))
 }
 
-func (ss *socketStatus) handleSysGetpeername(ctx *context) {
+func (ss *socketStatus) handleSysGetpeername(handler *notifHandler, ctx *context) {
 	if ss.addr == nil {
 		return
 	}
@@ -389,7 +389,7 @@ func (ss *socketStatus) handleSysGetpeername(ctx *context) {
 		return
 	}
 
-	err = writeProcMem(ss.pid, ctx.req.Data.Args[1], buf)
+	err = handler.writeProcMem(ss.pid, ctx.req.Data.Args[1], buf)
 	if err != nil {
 		ss.logger.WithError(err).Errorf("failed to write address %s", ss.addr)
 		return
@@ -397,7 +397,7 @@ func (ss *socketStatus) handleSysGetpeername(ctx *context) {
 
 	bufLen := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bufLen, uint32(len(buf)))
-	err = writeProcMem(ss.pid, ctx.req.Data.Args[2], bufLen)
+	err = handler.writeProcMem(ss.pid, ctx.req.Data.Args[2], bufLen)
 	if err != nil {
 		ss.logger.WithError(err).Errorf("failed to write address length %d", len(buf))
 		return
