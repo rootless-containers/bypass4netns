@@ -20,7 +20,7 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
 )
@@ -35,7 +35,7 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
 )
@@ -54,7 +54,7 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
   nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
@@ -77,7 +77,7 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
   # without 'sleep 1', benchmark is not performed.(race condition?)
-  nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP -p 6379" 
+  nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP -p 6379 --csv" 
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client

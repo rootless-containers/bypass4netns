@@ -33,7 +33,7 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) w
   NAME="test" exec_lxc /home/ubuntu/bypass4netns/test/setup_vxlan.sh redis-server $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR $TEST2_ADDR $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR
   NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run -p 4789:4789/udp --privileged --name redis-client -d $REDIS_IMAGE  sleep infinity"
   NAME="test2" exec_lxc /home/ubuntu/bypass4netns/test/setup_vxlan.sh redis-client $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR $TEST_ADDR $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR
-  NAME="test2" exec_lxc nerdctl exec redis-client redis-benchmark -q -h $TEST1_VXLAN_ADDR
+  NAME="test2" exec_lxc nerdctl exec redis-client redis-benchmark -q -h $TEST1_VXLAN_ADDR --csv
   
   NAME="test" exec_lxc nerdctl rm -f redis-server
   NAME="test2" exec_lxc nerdctl rm -f redis-client
@@ -48,7 +48,7 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE"
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec redis-server hostname -i)
   NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity"
-  NAME="test2" exec_lxc nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP"
+  NAME="test2" exec_lxc nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP --csv"
 
   NAME="test" exec_lxc nerdctl rm -f redis-server
   NAME="test2" exec_lxc nerdctl rm -f redis-client
