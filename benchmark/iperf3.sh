@@ -97,10 +97,12 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
   nerdctl rm -f iperf3-client
   systemctl --user stop iperf3-server
   systemctl --user stop run-bypass4netnsd
+  systemctl --user stop etcd.service
   systemctl --user reset-failed
   set -ex
 
   HOST_IP=$(hostname -I | awk '{print $1}')
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
@@ -118,5 +120,6 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
   nerdctl rm -f iperf3-client
   systemctl --user stop iperf3-server
   systemctl --user stop run-bypass4netnsd
+  systemctl --user stop etcd.service
   systemctl --user reset-failed
 )

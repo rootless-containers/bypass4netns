@@ -23,8 +23,6 @@ echo "===== Prepare ====="
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config iptables etcd jq tcpdump ethtool
   sudo systemctl stop etcd
   sudo systemctl disable etcd
-  HOST_IP=$(hostname -I | sed 's/ //')
-  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
 
   systemctl --user start dbus
 
@@ -61,8 +59,4 @@ EOF
   make
   sudo rm -f /usr/local/bin/bypass4netns*
   sudo make install
-
-  hostname -I | awk '{print $1}' | tee /tmp/host_ip
-  ~/bypass4netns/test/seccomp.json.sh | tee /tmp/seccomp.json
-
 )

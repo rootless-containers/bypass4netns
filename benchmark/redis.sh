@@ -64,13 +64,15 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
 echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) with multinode ====="
 (
   set +e
-  systemctl --user stop run-bypass4netnsd
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
+  systemctl --user stop run-bypass4netnsd
+  systemctl --user stop etcd.service
   systemctl --user reset-failed
   set -ex
 
   HOST_IP=$(hostname -I | awk '{print $1}')
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
@@ -82,4 +84,6 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
   systemctl --user stop run-bypass4netnsd
+  systemctl --user stop etcd.service
+  systemctl --user reset-failed
 )

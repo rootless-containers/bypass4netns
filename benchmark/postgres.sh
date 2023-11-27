@@ -78,10 +78,12 @@ echo "===== Benchmark: postgres client(w/ bypass4netns) server(w/ bypass4netns) 
   systemctl --user stop run-bypass4netnsd
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
+  systemctl --user stop etcd.service
   systemctl --user reset-failed
   set -ex
 
   HOST_IP=$(hostname -I | awk '{print $1}')
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
@@ -94,4 +96,6 @@ echo "===== Benchmark: postgres client(w/ bypass4netns) server(w/ bypass4netns) 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
   systemctl --user stop run-bypass4netnsd
+  systemctl --user stop etcd.service
+  systemctl --user reset-failed
 )

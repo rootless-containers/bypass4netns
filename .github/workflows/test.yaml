@@ -24,44 +24,128 @@ jobs:
         with:
           version: v1.49.0
           args: --verbose
-  ubuntu-2204-on-lxc:
-    name: Ubuntu 22.04 on LXC
+
+  create-lxc-image:
+    name: create-lxc-image
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v3.0.2
+
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+         path: /tmp/test-image.tar.zst
+         lookup-only: true
+
+      - name: setup lxd (v5.19)
+        id: s1
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: ./setup_lxd.sh
+
+      - name: launch lxc container
+        id: s6
+        if: steps.s1.conclusion == 'success'
+        run: ./launch_test_lxc.sh
+
+      - name: install dependencies and build
+        id: s7
+        if: steps.s6.conclusion == 'success'
+        run: sudo lxc exec test -- sudo --login --user ubuntu /host/test/init_test.sh
+
+      - name: export image
+        id: s8
+        if: steps.s7.conclusion == 'success'
+        run: ./export_lxc_image.sh test
+
+      - uses: actions/cache/save@v3
+        id: s11
+        if: steps.s8.conclusion == 'success'
+        with:
+          key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+          path: /tmp/test-image.tar.zst
+
+  test:
+    runs-on: ubuntu-22.04
+    needs: create-lxc-image
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v3.0.2
-      - name: install lxd (v5.19)
-        run: sudo snap remove --purge lxd && sudo snap install lxd --revision=26093
-      - run: sudo modprobe vxlan
-      - name: configure lxd
-        run: cat test/lxd.yaml | sudo lxd init --preseed && sudo sysctl -w net.ipv4.ip_forward=1
-      # thanks to https://andreas.scherbaum.la/post/2023-01-18_fix-lxc-network-issues-in-ubuntu-22.04/
-      - name: Disable Docker Firewall 1
-        run: sudo iptables -I DOCKER-USER -i lxdbr0 -o eth0 -j ACCEPT
-      - name: Disable Docker Firewall 2
-        run: sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-      - name: Disable Docker Firewall 3
-        run: sudo iptables -F FORWARD && sudo iptables -P FORWARD ACCEPT
+      - name: setup lxd (v5.19)
+        run: ./setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./launch_test_lxc.sh test-export
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user start containerd-fuse-overlayfs.service
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user status --no-pager containerd-fuse-overlayfs.service
+      - name: run test
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/test/run_test.sh"
+      # some source codes may be updated. re-export new image.
+      - name: export image
+        run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./export_lxc_image.sh test
+      - uses: actions/cache/save@v3
+        with:
+          key: lxc-image-${{ github.sha }}
+          path: /tmp/test-image.tar.zst
       #- name: debug
       #  run: ./debug.sh
-      - name: launch lxc container
-        run: ./launch_test_lxc.sh
-      - name: install dependencies and build
-        run: sudo lxc exec test -- sudo --login --user ubuntu /host/test/init_test.sh
-      - name: run tests
-        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/test/run_test.sh
-      - name: run multinode test
-        run: ./test/multinode.sh
-      - name: benchmark (iperf3)
-        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/iperf3.sh
-      - name: benchmark (redis)
-        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/redis.sh
-      - name: benchmark (postgresql)
-        run: sudo lxc exec test -- sudo --login --user ubuntu /home/ubuntu/bypass4netns/benchmark/postgres.sh
-      - name: multinode benchmark (iperf3)
-        run: ./benchmark/iperf3_multinode.sh
-      - name: multinode benchmark (redis)
-        run: ./benchmark/redis_multinode.sh
-      - name: multinode benchmark (postgresql)
-        run: ./benchmark/postgres_multinode.sh
 
+  benchmark:
+    runs-on: ubuntu-22.04
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        script: ["iperf3_host.sh", "iperf3.sh", "postgres.sh", "redis.sh"]
+    steps:
+      - uses: actions/checkout@v3.0.2
+      - name: setup lxd (v5.19)
+        run: ./setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-${{ github.sha }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./launch_test_lxc.sh test-export
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user start containerd-fuse-overlayfs.service
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user status --no-pager containerd-fuse-overlayfs.service
+      - name: run benchmark (${{ matrix.script }})
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}"
+
+  benchmark-multinode:
+    runs-on: ubuntu-22.04
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        script: ["iperf3_multinode.sh", "postgres_multinode.sh", "redis_multinode.sh"]
+    steps:
+      - uses: actions/checkout@v3.0.2
+      - name: setup lxd (v5.19)
+        run: ./setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-${{ github.sha }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./launch_test_lxc.sh test-export
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user start containerd-fuse-overlayfs.service
+      - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user status --no-pager containerd-fuse-overlayfs.service
+      - name: run benchmark (${{ matrix.script }})
+        run: ./benchmark/${{ matrix.script }}
