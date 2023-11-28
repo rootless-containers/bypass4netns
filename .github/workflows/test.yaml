@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
         with:
           fetch-depth: 1
       - uses: actions/setup-go@v3
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
 
       - uses: actions/cache/restore@v3
         id: cache-restore
@@ -71,7 +71,7 @@ jobs:
     needs: create-lxc-image
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
         run: ./setup_lxd.sh
       - uses: actions/cache/restore@v3
@@ -106,7 +106,7 @@ jobs:
       matrix:
         script: ["iperf3_host", "iperf3", "postgres", "redis"]
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
         run: ./setup_lxd.sh
       - uses: actions/cache/restore@v3
@@ -141,7 +141,7 @@ jobs:
       matrix:
         script: ["iperf3_multinode.sh", "postgres_multinode.sh", "redis_multinode.sh"]
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
         run: ./setup_lxd.sh
       - uses: actions/cache/restore@v3
