@@ -36,7 +36,7 @@ echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) 
   NAME="test2" exec_lxc nerdctl exec iperf3-client apk add --no-cache iperf3
 
   NAME="test" exec_lxc systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s
-  NAME="test2" exec_lxc nerdctl exec iperf3-client iperf3 -c $TEST1_VXLAN_ADDR -i 0 --connect-timeout 1000 -J > iperf3-multinode-wo-b4ns.json
+  NAME="test2" exec_lxc nerdctl exec iperf3-client iperf3 -c $TEST1_VXLAN_ADDR -i 0 --connect-timeout 1000 -J > iperf3-multinode-wo-b4ns.log
   
   NAME="test" exec_lxc nerdctl rm -f iperf3-server
   NAME="test" exec_lxc systemctl --user reset-failed
@@ -55,7 +55,7 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
 
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec iperf3-server hostname -i)
   NAME="test" exec_lxc systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s
-  NAME="test2" exec_lxc nerdctl exec iperf3-client iperf3 -c $SERVER_IP -i 0 --connect-timeout 1000 -J > iperf3-multinode-w-b4ns.json
+  NAME="test2" exec_lxc nerdctl exec iperf3-client iperf3 -c $SERVER_IP -i 0 --connect-timeout 1000 -J > iperf3-multinode-w-b4ns.log
 
   NAME="test" exec_lxc nerdctl rm -f iperf3-server
   NAME="test2" exec_lxc nerdctl rm -f iperf3-client

@@ -20,8 +20,8 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv > redis-wo-b4ns-direct.csv
-  cat redis-wo-b4ns-direct.csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv > redis-wo-b4ns-direct.log
+  cat redis-wo-b4ns-direct.log
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
@@ -37,8 +37,8 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-wo-b4ns-host.csv
-  cat redis-wo-b4ns-host.csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-wo-b4ns-host.log
+  cat redis-wo-b4ns-host.log
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
@@ -58,8 +58,8 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
   nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-w-b4ns.csv
-  cat redis-w-b4ns.csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-w-b4ns.log
+  cat redis-w-b4ns.log
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
