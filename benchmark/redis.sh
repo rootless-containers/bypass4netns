@@ -92,8 +92,3 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemctl --user stop etcd.service
   systemctl --user reset-failed
 )
-
-echo "===== Visualize benchmark: redis ====="
-(
-  python3 redis_plot.py redis-wo-b4ns-direct.csv redis-wo-b4ns-host.csv redis-w-b4ns.csv redis.png
-)

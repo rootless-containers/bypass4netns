@@ -126,11 +126,16 @@ jobs:
       - name: upload plot
         id: get_plot
         if: matrix.script == 'redis'
-        run: sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}.png /tmp/${{ matrix.script }}.png
+        run: |
+          mkdir /tmp/benchmark-results
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-direct.csv /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-host.csv /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-w-b4ns.csv /tmp/benchmark-results/.
       - uses: actions/upload-artifact@v3
         if: steps.get_plot.conclusion == 'success'
         with:
-          path: /tmp/${{ matrix.script }}.png
+          name: benchmark-results
+          path: /tmp/benchmark-results
 
 
   benchmark-multinode:
@@ -139,7 +144,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        script: ["iperf3_multinode.sh", "postgres_multinode.sh", "redis_multinode.sh"]
+        script: ["iperf3", "postgres", "redis"]
     steps:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
@@ -157,4 +162,34 @@ jobs:
       - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user start containerd-fuse-overlayfs.service
       - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user status --no-pager containerd-fuse-overlayfs.service
       - name: run benchmark (${{ matrix.script }})
-        run: ./benchmark/${{ matrix.script }}
+        run: ./benchmark/${{ matrix.script }}_multinode.sh
+      - name: upload plot
+        id: get_plot
+        if: matrix.script == 'redis'
+        run: |
+          mkdir /tmp/benchmark-results
+          sudo lxc file pull test2/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-multinode-wo-b4ns.csv /tmp/benchmark-results/.
+          sudo lxc file pull test2/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-multinode-w-b4ns.csv /tmp/benchmark-results/.
+      - uses: actions/upload-artifact@v3
+        if: steps.get_plot.conclusion == 'success'
+        with:
+          name: benchmark-results
+          path: /tmp/benchmark-results
+  
+  plot:
+    runs-on: ubuntu-22.04
+    needs: [benchmark, benchmark-multinode]
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - run: sudo apt update && sudo apt install python3 python3-pip
+      - run: pip3 install matplotlib numpy
+      - uses: actions/download-artifact@v3
+        with:
+          name: benchmark-results
+          path: ./
+      - run: mkdir /tmp/benchmark-plots
+      - run: python3 benchmark/redis_plot.py python3 redis_plot.py redis-wo-b4ns-direct.csv redis-wo-b4ns-host.csv redis-multinode-wo-b4ns.csv redis-w-b4ns.csv redis-multinode-w-b4ns.csv /tmp/benchmark-plots/redis.png
+      - uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-plots
+          path: /tmp/benchmark-plots
