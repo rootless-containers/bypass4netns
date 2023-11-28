@@ -20,7 +20,8 @@ echo "===== Prepare ====="
   sudo chown -R $TEST_USER:$TEST_USER ~/bypass4netns
 
   sudo apt-get update
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config iptables etcd jq tcpdump ethtool
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -q -y build-essential curl dbus-user-session iperf3 libseccomp-dev uidmap python3 pkg-config iptables etcd jq tcpdump ethtool python3-pip
+  pip3 install matplotlib numpy
   sudo systemctl stop etcd
   sudo systemctl disable etcd
 

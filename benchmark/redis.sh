@@ -1,7 +1,7 @@
 #!/bin/bash
-
-
 set -eu -o pipefail
+
+cd $(dirname $0)
 
 REDIS_VERSION=7.2.3
 REDIS_IMAGE="redis:${REDIS_VERSION}"
@@ -20,7 +20,9 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv > redis-wo-b4ns-direct.csv
+  cat redis-wo-b4ns-direct.csv
+
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
 )
@@ -35,7 +37,9 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
   nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-wo-b4ns-host.csv
+  cat redis-wo-b4ns-host.csv
+
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
 )
@@ -54,7 +58,8 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
   nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv
+  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-w-b4ns.csv
+  cat redis-w-b4ns.csv
 
   nerdctl rm -f redis-server
   nerdctl rm -f redis-client
@@ -86,4 +91,9 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemctl --user stop run-bypass4netnsd
   systemctl --user stop etcd.service
   systemctl --user reset-failed
+)
+
+echo "===== Visualize benchmark: redis ====="
+(
+  python3 redis_plot.py redis-wo-b4ns-direct.csv redis-wo-b4ns-host.csv redis-w-b4ns.csv redis.png
 )
