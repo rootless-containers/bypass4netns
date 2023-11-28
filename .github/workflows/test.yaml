@@ -125,7 +125,7 @@ jobs:
         run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}.sh"
       - name: upload plot
         id: get_plot
-        if: matrix.script == 'redis'
+        if: matrix.script == 'redis' || matrix.script == 'iperf3'
         run: |
           mkdir /tmp/benchmark-results
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-direct.csv /tmp/benchmark-results/.
@@ -165,7 +165,7 @@ jobs:
         run: ./benchmark/${{ matrix.script }}_multinode.sh
       - name: upload plot
         id: get_plot
-        if: matrix.script == 'redis'
+        if: matrix.script == 'redis' || matrix.script == 'iperf3'
         run: |
           mkdir /tmp/benchmark-results
           sudo lxc file pull test2/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-multinode-wo-b4ns.csv /tmp/benchmark-results/.
@@ -188,7 +188,8 @@ jobs:
           name: benchmark-results
           path: ./
       - run: mkdir /tmp/benchmark-plots
-      - run: python3 benchmark/redis_plot.py python3 redis_plot.py redis-wo-b4ns-direct.csv redis-wo-b4ns-host.csv redis-multinode-wo-b4ns.csv redis-w-b4ns.csv redis-multinode-w-b4ns.csv /tmp/benchmark-plots/redis.png
+      - run: python3 benchmark/redis_plot.py redis-wo-b4ns-direct.csv redis-wo-b4ns-host.csv redis-multinode-wo-b4ns.csv redis-w-b4ns.csv redis-multinode-w-b4ns.csv /tmp/benchmark-plots/redis.png
+      - run: python3 benchmark/iperf3_plot.py iperf3-wo-b4ns-direct.json iperf3-wo-b4ns-host.json iperf3-multinode-wo-b4ns.json iperf3-w-b4ns.json iperf3-multinode-w-b4ns.json /tmp/benchmark-plots/iperf3.png
       - uses: actions/upload-artifact@v3
         with:
           name: benchmark-plots

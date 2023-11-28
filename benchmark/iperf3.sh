@@ -2,6 +2,8 @@
 
 set -eu -o pipefail
 
+cd $(dirname $0)
+
 ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 
 source ~/.profile
@@ -26,7 +28,7 @@ echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) 
 
   SERVER_IP=$(nerdctl exec iperf3-server hostname -i)
   sleep 1
-  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -i 0 --connect-timeout 1000
+  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -i 0 --connect-timeout 1000 -J > iperf3-wo-b4ns-direct.json
 
   nerdctl rm -f iperf3-server
   nerdctl rm -f iperf3-client
@@ -52,7 +54,7 @@ echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) 
 
   SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 1
-  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000
+  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-wo-b4ns-host.json
 
   nerdctl rm -f iperf3-server
   nerdctl rm -f iperf3-client
@@ -81,7 +83,7 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) vi
 
   SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 1
-  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000
+  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-w-b4ns.json
 
   nerdctl rm -f iperf3-server
   nerdctl rm -f iperf3-client
