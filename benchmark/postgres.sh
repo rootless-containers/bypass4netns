@@ -24,7 +24,7 @@ echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4net
   PID=$(nerdctl inspect psql-client | jq '.[0].State.Pid')
   NAME="psql-client" exec_netns /bin/bash -c "until nc -z $SERVER_IP 5432; do sleep 1; done"
   nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -i postgres
-  nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -t 1000 postgres
+  nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -t 1000 postgres > postgres-wo-b4ns-direct.log
 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
@@ -42,7 +42,7 @@ echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4net
   SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 5
   nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -i postgres
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres
+  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-wo-b4ns-host.log
 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
@@ -65,7 +65,7 @@ echo "===== Benchmark: postgresql client(w/ bypass4netns) server(w/ bypass4netns
   PID=$(nerdctl inspect psql-client | jq '.[0].State.Pid')
   NAME="psql-client" exec_netns /bin/bash -c "until nc -z $SERVER_IP 15432; do sleep 1; done"
   nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -i postgres
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres
+  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-w-b4ns.log
 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client

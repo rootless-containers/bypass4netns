@@ -35,7 +35,7 @@ echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4net
   NAME="test2" exec_lxc /home/ubuntu/bypass4netns/test/setup_vxlan.sh psql-client $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR $TEST_ADDR $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR
   sleep 5
   NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $TEST1_VXLAN_ADDR -U postgres -s 10 -i postgres
-  NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $TEST1_VXLAN_ADDR -U postgres -s 10 -t 1000 postgres
+  NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $TEST1_VXLAN_ADDR -U postgres -s 10 -t 1000 postgres > postgres-multinode-wo-b4ns.log
   
   NAME="test" exec_lxc nerdctl rm -f psql-server
   NAME="test2" exec_lxc nerdctl rm -f psql-client
@@ -51,7 +51,7 @@ echo "===== Benchmark: postgresql client(w/ bypass4netns) server(w/ bypass4netns
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec psql-server hostname -i)
   sleep 5
   NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -i postgres
-  NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -t 1000 postgres
+  NAME="test2" exec_lxc nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -t 1000 postgres > postgres-multinode-w-b4ns.log
 
   NAME="test" exec_lxc nerdctl rm -f psql-server
   NAME="test2" exec_lxc nerdctl rm -f psql-client
