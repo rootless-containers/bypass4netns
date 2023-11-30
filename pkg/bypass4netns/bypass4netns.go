@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,7 +81,7 @@ func parseStateFds(stateFds []string, recvFds []int) (uintptr, error) {
 }
 
 // readProcMem read data from memory of specified pid process at the spcified offset.
-func (h *notifHandler) readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
+func (h *notifHandler) readProcMem(pid int, offset uint64, len uint64) ([]byte, error) {
 	buffer := make([]byte, len) // PATH_MAX
 
 	memfd, err := h.openMem(pid)
@@ -97,7 +98,7 @@ func (h *notifHandler) readProcMem(pid uint32, offset uint64, len uint64) ([]byt
 }
 
 // writeProcMem writes data to memory of specified pid process at the specified offset.
-func (h *notifHandler) writeProcMem(pid uint32, offset uint64, buf []byte) error {
+func (h *notifHandler) writeProcMem(pid int, offset uint64, buf []byte) error {
 	memfd, err := h.openMem(pid)
 	if err != nil {
 		return err
@@ -114,7 +115,7 @@ func (h *notifHandler) writeProcMem(pid uint32, offset uint64, buf []byte) error
 	return nil
 }
 
-func (h *notifHandler) openMem(pid uint32) (int, error) {
+func (h *notifHandler) openMem(pid int) (int, error) {
 	if memfd, ok := h.memfds[pid]; ok {
 		return memfd, nil
 	}
@@ -133,7 +134,7 @@ func (h *notifHandler) openMem(pid uint32) (int, error) {
 	return memfd, nil
 }
 
-func openMemWithNSEnter(pid uint32) (int, error) {
+func openMemWithNSEnter(pid int) (int, error) {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return 0, err
@@ -278,15 +279,74 @@ type context struct {
 	resp    *libseccomp.ScmpNotifResp
 }
 
-// getFdInProcess get the file descriptor in other process
-func getFdInProcess(pid, targetFd int) (int, error) {
+func (h *notifHandler) getPidFdInfo(pid int) (*pidInfo, error) {
+	// retrieve pidfd from cache
+	if pidfd, ok := h.pidInfos[pid]; ok {
+		return &pidfd, nil
+	}
+
 	targetPidfd, err := pidfd.Open(int(pid), 0)
+	if err == nil {
+		info := pidInfo{
+			pidType: PROCESS,
+			pidfd:   targetPidfd,
+			tgid:    pid, // process's pid is equal to its tgid
+		}
+		h.pidInfos[pid] = info
+		return &info, nil
+	}
+
+	// pid can be thread and pidfd_open fails with thread's pid.
+	// retrieve process's pid (tgid) from /proc/<pid>/status and retry to get pidfd with the tgid.
+	logrus.Warnf("pidfd Open failed: pid=%d err=%q, this pid maybe thread and retrying with tgid", pid, err)
+	st, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %d's status err=%q", pid, err)
+	}
+
+	nextTgid := -1
+	for _, s := range strings.Split(string(st), "\n") {
+		if strings.Contains(s, "Tgid") {
+			tgids := strings.Split(s, "\t")
+			if len(tgids) < 2 {
+				return nil, fmt.Errorf("unexpected /proc/%d/status len=%q status=%q", pid, len(tgids), string(st))
+			}
+			tgid, err := strconv.Atoi(tgids[1])
+			if err != nil {
+				return nil, fmt.Errorf("unexpected /proc/%d/status err=%q status=%q", pid, err, string(st))
+			}
+			nextTgid = tgid
+		}
+		if nextTgid > 0 {
+			break
+		}
+	}
+	if nextTgid < 0 {
+		logrus.Errorf("cannot get Tgid from /proc/%d/status status=%q", pid, string(st))
+	}
+	targetPidfd, err = pidfd.Open(nextTgid, 0)
+	if err != nil {
+		return nil, fmt.Errorf("pidfd Open failed with Tgid: pid=%d %s", nextTgid, err)
+	}
+
+	logrus.Infof("successfully got pidfd for pid=%d tgid=%d", pid, nextTgid)
+	info := pidInfo{
+		pidType: THREAD,
+		pidfd:   targetPidfd,
+		tgid:    nextTgid,
+	}
+	h.pidInfos[pid] = info
+	return &info, nil
+}
+
+// getFdInProcess get the file descriptor in other process
+func (h *notifHandler) getFdInProcess(pid, targetFd int) (int, error) {
+	targetPidfd, err := h.getPidFdInfo(pid)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd Open failed: %s", err)
 	}
-	defer syscall.Close(int(targetPidfd))
 
-	fd, err := targetPidfd.GetFd(targetFd, 0)
+	fd, err := targetPidfd.pidfd.GetFd(targetFd, 0)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd GetFd failed: %s", err)
 	}
@@ -316,7 +376,7 @@ func getSocketArgs(sockfd int) (int, int, int, error) {
 	return sock_domain, sock_type, sock_protocol, nil
 }
 
-func (h *notifHandler) readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockaddr, error) {
+func (h *notifHandler) readSockaddrFromProcess(pid int, offset uint64, addrlen uint64) (*sockaddr, error) {
 	buf, err := h.readProcMem(pid, offset, addrlen)
 	if err != nil {
 		return nil, fmt.Errorf("failed readProcMem pid %v offset 0x%x: %s", pid, offset, err)
@@ -324,8 +384,8 @@ func (h *notifHandler) readSockaddrFromProcess(pid uint32, offset uint64, addrle
 	return newSockaddr(buf)
 }
 
-func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, error) {
-	logger := logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd})
+func (h *notifHandler) registerSocket(pid int, sockfd int, syscallName string) (*socketStatus, error) {
+	logger := logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd, "syscall": syscallName})
 	proc, ok := h.processes[pid]
 	if !ok {
 		proc = newProcessStatus()
@@ -339,7 +399,13 @@ func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, er
 		return sock, nil
 	}
 
-	sockFdHost, err := getFdInProcess(int(pid), sockfd)
+	// If the pid is thread, its process can have corresponding socket
+	procInfo, ok := h.pidInfos[int(pid)]
+	if ok && procInfo.pidType == THREAD {
+		return nil, fmt.Errorf("unexpected procInfo")
+	}
+
+	sockFdHost, err := h.getFdInProcess(int(pid), sockfd)
 	if err != nil {
 		return nil, err
 	}
@@ -350,13 +416,16 @@ func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, er
 	if err != nil {
 		// non-socket fd is not bypassable
 		sock.state = NotBypassable
+		logger.Debugf("failed to get socket args err=%q", err)
 	} else {
 		if sockDomain != syscall.AF_INET && sockDomain != syscall.AF_INET6 {
 			// non IP sockets are not handled.
 			sock.state = NotBypassable
+			logger.Debugf("socket domain=0x%x", sockDomain)
 		} else if sockType != syscall.SOCK_STREAM {
 			// only accepting TCP socket
 			sock.state = NotBypassable
+			logger.Debugf("socket type=0x%x", sockType)
 		} else {
 			// only newly created socket is allowed.
 			_, err := syscall.Getpeername(sockFdHost)
@@ -377,7 +446,7 @@ func (h *notifHandler) registerSocket(pid uint32, sockfd int) (*socketStatus, er
 	return sock, nil
 }
 
-func (h *notifHandler) getSocket(pid uint32, sockfd int) *socketStatus {
+func (h *notifHandler) getSocket(pid int, sockfd int) *socketStatus {
 	proc, ok := h.processes[pid]
 	if !ok {
 		return nil
@@ -386,7 +455,7 @@ func (h *notifHandler) getSocket(pid uint32, sockfd int) *socketStatus {
 	return sock
 }
 
-func (h *notifHandler) removeSocket(pid uint32, sockfd int) {
+func (h *notifHandler) removeSocket(pid int, sockfd int) {
 	defer logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd}).Debugf("socket is removed")
 	proc, ok := h.processes[pid]
 	if !ok {
@@ -407,36 +476,59 @@ func (h *notifHandler) handleReq(ctx *context) {
 
 	ctx.resp.Flags |= SeccompUserNotifFlagContinue
 
+	// ensure pid is registered in notifHandler.pidInfos
+	pidInfo, err := h.getPidFdInfo(int(ctx.req.Pid))
+	if err != nil {
+		logrus.Errorf("failed to get pidfd err=%q", err)
+		return
+	}
+
+	// threads shares file descriptors in the same process space.
+	// so use tgid as pid to process socket file descriptors
+	pid := pidInfo.tgid
+	if pidInfo.pidType == THREAD {
+		logrus.Debugf("pid %d is thread. use process's tgid %d as pid", ctx.req.Pid, pid)
+	}
+
 	// cleanup sockets when the process exit.
 	if syscallName == "_exit" || syscallName == "exit_group" {
-		delete(h.processes, ctx.req.Pid)
-		if memfd, ok := h.memfds[ctx.req.Pid]; ok {
-			syscall.Close(memfd)
-			delete(h.memfds, ctx.req.Pid)
+		if pidInfo, ok := h.pidInfos[int(ctx.req.Pid)]; ok {
+			syscall.Close(int(pidInfo.pidfd))
+			delete(h.pidInfos, int(ctx.req.Pid))
 		}
-		logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid}).Debugf("process is removed")
+		if pidInfo.pidType == THREAD {
+			logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid, "tgid": pid}).Infof("thread is removed")
+		}
+
+		if pidInfo.pidType == PROCESS {
+			delete(h.processes, pid)
+			if memfd, ok := h.memfds[pid]; ok {
+				syscall.Close(memfd)
+				delete(h.memfds, pid)
+			}
+			logrus.WithFields(logrus.Fields{"pid": pid}).Infof("process is removed")
+		}
 		return
 	}
 
+	sockfd := int(ctx.req.Data.Args[0])
 	// remove socket when closed
 	if syscallName == "close" {
-		h.removeSocket(ctx.req.Pid, int(ctx.req.Data.Args[0]))
+		h.removeSocket(pid, sockfd)
 		return
 	}
 
-	pid := ctx.req.Pid
-	sockfd := int(ctx.req.Data.Args[0])
 	sock := h.getSocket(pid, sockfd)
 	if sock == nil {
-		sock, err = h.registerSocket(pid, sockfd)
+		sock, err = h.registerSocket(pid, sockfd, syscallName)
 		if err != nil {
 			logrus.Errorf("failed to register socket pid %d sockfd %d: %s", pid, sockfd, err)
 			return
 		}
 	}
 
-	if syscallName == "getpeername" {
-		sock.handleSysGetpeername(h, ctx)
+	if syscallName == "connect" {
+		logrus.WithFields(logrus.Fields{"notifFd": h.fd, "pid": pid, "sockfd": sockfd}).Infof("connect")
 	}
 
 	switch sock.state {
@@ -448,11 +540,11 @@ func (h *notifHandler) handleReq(ctx *context) {
 
 	switch syscallName {
 	case "bind":
-		sock.handleSysBind(h, ctx)
+		sock.handleSysBind(pid, h, ctx)
 	case "connect":
 		sock.handleSysConnect(h, ctx)
 	case "setsockopt":
-		sock.handleSysSetsockopt(h, ctx)
+		sock.handleSysSetsockopt(pid, h, ctx)
 	case "fcntl":
 		sock.handleSysFcntl(ctx)
 	case "getpeername":
@@ -595,7 +687,7 @@ type notifHandler struct {
 	forwardingPorts map[int]ForwardPortMapping
 
 	// key is pid
-	processes map[uint32]*processStatus
+	processes map[int]*processStatus
 
 	// key is destination address e.g. "192.168.1.1:1000"
 	containerInterfaces map[string]containerInterface
@@ -603,7 +695,10 @@ type notifHandler struct {
 	multinode           *MultinodeConfig
 
 	// cache /proc/<pid>/mem's fd to reduce latency. key is pid, value is fd
-	memfds map[uint32]int
+	memfds map[int]int
+
+	// cache pidfd to reduce latency. key is pid.
+	pidInfos map[int]pidInfo
 }
 
 type containerInterface struct {
@@ -612,13 +707,27 @@ type containerInterface struct {
 	lastCheckedUnix int64
 }
 
+type pidInfoPidType int
+
+const (
+	PROCESS pidInfoPidType = iota
+	THREAD
+)
+
+type pidInfo struct {
+	pidType pidInfoPidType
+	pidfd   pidfd.PidFd
+	tgid    int
+}
+
 func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
 	notifHandler := notifHandler{
 		fd:              libseccomp.ScmpFd(fd),
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
-		processes:       map[uint32]*processStatus{},
-		memfds:          map[uint32]int{},
+		processes:       map[int]*processStatus{},
+		memfds:          map[int]int{},
+		pidInfos:        map[int]pidInfo{},
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate

@@ -70,7 +70,7 @@ func newProcessStatus() *processStatus {
 
 type socketStatus struct {
 	state      socketState
-	pid        uint32
+	pid        int
 	sockfd     int
 	sockDomain int
 	sockType   int
@@ -83,7 +83,7 @@ type socketStatus struct {
 	logger *logrus.Entry
 }
 
-func newSocketStatus(pid uint32, sockfd int, sockDomain, sockType, sockProto int) *socketStatus {
+func newSocketStatus(pid int, sockfd int, sockDomain, sockType, sockProto int) *socketStatus {
 	return &socketStatus{
 		state:         NotBypassed,
 		pid:           pid,
@@ -97,14 +97,14 @@ func newSocketStatus(pid uint32, sockfd int, sockDomain, sockType, sockProto int
 	}
 }
 
-func (ss *socketStatus) handleSysSetsockopt(handler *notifHandler, ctx *context) {
+func (ss *socketStatus) handleSysSetsockopt(pid int, handler *notifHandler, ctx *context) {
 	ss.logger.Debug("handle setsockopt")
 	level := ctx.req.Data.Args[1]
 	optname := ctx.req.Data.Args[2]
 	optlen := ctx.req.Data.Args[4]
-	optval, err := handler.readProcMem(ctx.req.Pid, ctx.req.Data.Args[3], optlen)
+	optval, err := handler.readProcMem(pid, ctx.req.Data.Args[3], optlen)
 	if err != nil {
-		ss.logger.Errorf("setsockopt readProcMem failed pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
+		ss.logger.Errorf("setsockopt readProcMem failed pid %v offset 0x%x: %s", pid, ctx.req.Data.Args[1], err)
 	}
 
 	value := socketOption{
@@ -292,8 +292,8 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	ss.logger.Infof("bypassed connect socket destAddr=%s", ss.addr)
 }
 
-func (ss *socketStatus) handleSysBind(handler *notifHandler, ctx *context) {
-	sa, err := handler.readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
+func (ss *socketStatus) handleSysBind(pid int, handler *notifHandler, ctx *context) {
+	sa, err := handler.readSockaddrFromProcess(pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
 		ss.logger.Errorf("failed to read sockaddr from process: %q", err)
 		ss.state = NotBypassable
