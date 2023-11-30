@@ -89,7 +89,7 @@ jobs:
       - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user start containerd-fuse-overlayfs.service
       - run: sudo lxc exec test -- sudo --login --user ubuntu systemctl --user status --no-pager containerd-fuse-overlayfs.service
       - name: run test
-        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/test/run_test.sh"
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/test/run_test.sh SYNC"
       # some source codes may be updated. re-export new image.
       - name: export image
         run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./export_lxc_image.sh test

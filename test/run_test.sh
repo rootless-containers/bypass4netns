@@ -9,7 +9,7 @@ nerdctl pull --quiet "${ALPINE_IMAGE}"
 
 SCRIPT_DIR=$(cd $(dirname $0); pwd)
 set +u
-if [ ! -v 1 ]; then
+if [ "$1" == "SYNC" ]; then
   echo "updating source code"
   rm -rf ~/bypass4netns
   sudo cp -r /host ~/bypass4netns
@@ -30,11 +30,46 @@ set +e
 systemctl --user stop run-iperf3
 systemctl --user reset-failed
 sleep 1
+systemctl --user restart containerd
+sleep 1
+systemctl --user restart buildkit
+sleep 3
 set -e
 
 systemd-run --user --unit run-iperf3 iperf3 -s
 HOST_IP=$(hostname -I | awk '{print $1}')
 ~/bypass4netns/test/seccomp.json.sh | tee /tmp/seccomp.json
+
+echo "===== static linked binary test ====="
+(
+  set +e
+  systemctl --user stop run-bypass4netns-static
+  nerdctl rm -f test1
+  nerdctl rm -f test2
+  systemctl --user reset-failed
+  set -ex
+
+  IMAGE_NAME="b4ns:static"
+  nerdctl build -f ./DockerfileHttpServer -t $IMAGE_NAME .
+
+  systemd-run --user --unit run-bypass4netns-static bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8"
+  sleep 1
+  nerdctl run -d -p 8081:8080 --name test1 $IMAGE_NAME /httpserver -mode server
+  nerdctl run --security-opt seccomp=/tmp/seccomp.json -d --name test2 $IMAGE_NAME sleep infinity
+  nerdctl exec test2 /httpserver -mode client -url http://$HOST_IP:8081/ping
+  nerdctl exec test2 /httpserver -mode client -url http://$HOST_IP:8081/ping
+  nerdctl exec test2 /httpserver -mode client -url http://$HOST_IP:8081/ping
+
+  COUNT=$(journalctl --user -u run-bypass4netns-static.service | grep 'bypassed connect socket' | wc -l)
+  if [ $COUNT != 3 ]; then
+    echo "static linked binary bypassing not working correctly."
+    exit 1
+  fi
+
+  nerdctl rm -f test1
+  nerdctl rm -f test2
+  systemctl --user stop run-bypass4netns-static
+)
 
 echo "===== '--ignore' option test ====="
 (
