@@ -7,7 +7,7 @@ POSTGRES_IMAGE="postgres:$POSTGRES_VERSION"
 
 source ~/.profile
 cd $(dirname $0)
-. ../util.sh
+. ../../util.sh
 
 nerdctl pull --quiet $POSTGRES_IMAGE
 
