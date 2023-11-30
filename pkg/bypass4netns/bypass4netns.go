@@ -527,15 +527,29 @@ func (h *notifHandler) handleReq(ctx *context) {
 		}
 	}
 
-	if syscallName == "connect" {
-		logrus.WithFields(logrus.Fields{"notifFd": h.fd, "pid": pid, "sockfd": sockfd}).Infof("connect")
-	}
-
 	switch sock.state {
-	case NotBypassable, Bypassed:
+	case NotBypassable:
+		// sometimes close(2) is not called for the fd.
+		// To handle such condition, re-register fd when connect is called for not bypassable fd.
+		if syscallName == "connect" {
+			h.removeSocket(pid, sockfd)
+			sock, err = h.registerSocket(pid, sockfd, syscallName)
+			if err != nil {
+				logrus.Errorf("failed to re-register socket pid %d sockfd %d: %s", pid, sockfd, err)
+				return
+			}
+		}
+		if sock.state != NotBypassed {
+			return
+		}
+
+		// when sock.state == NotBypassed, continue
+	case Bypassed:
+		if syscallName == "getpeername" {
+			sock.handleSysGetpeername(h, ctx)
+		}
 		return
 	default:
-		// continue
 	}
 
 	switch syscallName {
