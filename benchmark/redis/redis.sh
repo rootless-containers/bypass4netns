@@ -9,7 +9,41 @@ REDIS_IMAGE="redis:${REDIS_VERSION}"
 source ~/.profile
 
 HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
+sudo nerdctl pull --quiet $REDIS_IMAGE
 nerdctl pull --quiet $REDIS_IMAGE
+
+echo "===== Benchmark: redis rootful via NetNS ====="
+(
+  set +e
+  sudo nerdctl rm -f redis-server
+  sudo nerdctl rm -f redis-client
+  set -ex
+
+  sudo nerdctl run -d --name redis-server "${REDIS_IMAGE}"
+  sudo nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
+  SERVER_IP=$(sudo nerdctl exec redis-server hostname -i)
+  sudo nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP --csv > redis-rootful-direct.log
+  cat redis-rootful-direct.log
+
+  sudo nerdctl rm -f redis-server
+  sudo nerdctl rm -f redis-client
+)
+
+echo "===== Benchmark: redis rootful via host ====="
+(
+  set +e
+  sudo nerdctl rm -f redis-server
+  sudo nerdctl rm -f redis-client
+  set -ex
+
+  sudo nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
+  sudo nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
+  sudo nerdctl exec redis-client redis-benchmark -q -h $HOST_IP -p 6380 --csv > redis-rootful-host.log
+  cat redis-rootful-host.log
+
+  sudo nerdctl rm -f redis-server
+  sudo nerdctl rm -f redis-client
+)
 
 echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (

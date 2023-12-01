@@ -8,8 +8,59 @@ ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 
 source ~/.profile
 
+sudo nerdctl pull --quiet $ALPINE_IMAGE
 nerdctl pull --quiet $ALPINE_IMAGE
 HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
+
+echo "===== Benchmark: iperf3 rootful via NetNS ====="
+(
+  set +e
+  sudo nerdctl rm -f iperf3-server
+  sudo nerdctl rm -f iperf3-client
+  systemctl --user stop iperf3-server
+  set -ex
+
+  sudo nerdctl run -d --name iperf3-server $ALPINE_IMAGE sleep infinity
+  sudo nerdctl exec iperf3-server apk add --no-cache iperf3
+  sudo nerdctl run -d --name iperf3-client $ALPINE_IMAGE sleep infinity
+  sudo nerdctl exec iperf3-client apk add --no-cache iperf3
+
+  systemd-run --user --unit iperf3-server sudo nerdctl exec iperf3-server iperf3 -s
+
+  SERVER_IP=$(sudo nerdctl exec iperf3-server hostname -i)
+  sleep 1
+  sudo nerdctl exec iperf3-client iperf3 -c $SERVER_IP -i 0 --connect-timeout 1000 -J > iperf3-rootful-direct.log
+
+  sudo nerdctl rm -f iperf3-server
+  sudo nerdctl rm -f iperf3-client
+  systemctl --user stop iperf3-server
+  systemctl --user reset-failed
+)
+
+echo "===== Benchmark: iperf3 rootful via host ====="
+(
+  set +e
+  sudo nerdctl rm -f iperf3-server
+  sudo nerdctl rm -f iperf3-client
+  systemctl --user stop iperf3-server
+  systemctl --user reset-failed
+  set -ex
+
+  sudo nerdctl run -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
+  sudo nerdctl exec iperf3-server apk add --no-cache iperf3
+  sudo nerdctl run -d --name iperf3-client $ALPINE_IMAGE sleep infinity
+  sudo nerdctl exec iperf3-client apk add --no-cache iperf3
+
+  systemd-run --user --unit iperf3-server sudo nerdctl exec iperf3-server iperf3 -s
+
+  sleep 1
+  sudo nerdctl exec iperf3-client iperf3 -c $HOST_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-rootful-host.log
+
+  sudo nerdctl rm -f iperf3-server
+  sudo nerdctl rm -f iperf3-client
+  systemctl --user stop iperf3-server
+  systemctl --user reset-failed
+)
 
 echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (

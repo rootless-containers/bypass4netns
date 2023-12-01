@@ -126,6 +126,8 @@ jobs:
         if: matrix.script != 'iperf3/iperf3_host'
         run: |
           mkdir /tmp/benchmark-results
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-rootful-direct.log /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-rootful-host.log /tmp/benchmark-results/.
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-direct.log /tmp/benchmark-results/.
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-host.log /tmp/benchmark-results/.
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-w-b4ns.log /tmp/benchmark-results/.
@@ -162,6 +164,7 @@ jobs:
       - name: upload plot
         run: |
           mkdir /tmp/benchmark-results
+          cp benchmark/${{ matrix.script }}-multinode-rootful.log /tmp/benchmark-results/.
           cp benchmark/${{ matrix.script }}-multinode-wo-b4ns.log /tmp/benchmark-results/.
           cp benchmark/${{ matrix.script }}-multinode-w-b4ns.log /tmp/benchmark-results/.
       - uses: actions/upload-artifact@v3
@@ -181,10 +184,10 @@ jobs:
           name: benchmark-results
           path: ./
       - run: mkdir /tmp/benchmark-plots
-      - run: python3 benchmark/redis/redis_plot.py redis-wo-b4ns-direct.log redis-wo-b4ns-host.log redis-multinode-wo-b4ns.log redis-w-b4ns.log redis-multinode-w-b4ns.log /tmp/benchmark-plots/redis.png
-      - run: python3 benchmark/iperf3/iperf3_plot.py iperf3-wo-b4ns-direct.log iperf3-wo-b4ns-host.log iperf3-multinode-wo-b4ns.log iperf3-w-b4ns.log iperf3-multinode-w-b4ns.log /tmp/benchmark-plots/iperf3.png
-      - run: python3 benchmark/postgres/postgres_plot.py postgres-wo-b4ns-direct.log postgres-wo-b4ns-host.log postgres-multinode-wo-b4ns.log postgres-w-b4ns.log postgres-multinode-w-b4ns.log /tmp/benchmark-plots/postgres.png
-      - run: python3 benchmark/block/block_plot.py block-wo-b4ns-direct.log block-wo-b4ns-host.log block-multinode-wo-b4ns.log block-w-b4ns.log block-multinode-w-b4ns.log /tmp/benchmark-plots/block.png
+      - run: python3 benchmark/redis/redis_plot.py redis-rootful-direct.log redis-rootful-host.log redis-multinode-rootful.log redis-wo-b4ns-direct.log redis-wo-b4ns-host.log redis-multinode-wo-b4ns.log redis-w-b4ns.log redis-multinode-w-b4ns.log /tmp/benchmark-plots/redis.png
+      - run: python3 benchmark/iperf3/iperf3_plot.py iperf3-rootful-direct.log iperf3-rootful-host.log iperf3-multinode-rootful.log iperf3-wo-b4ns-direct.log iperf3-wo-b4ns-host.log iperf3-multinode-wo-b4ns.log iperf3-w-b4ns.log iperf3-multinode-w-b4ns.log /tmp/benchmark-plots/iperf3.png
+      - run: python3 benchmark/postgres/postgres_plot.py postgres-rootful-direct.log postgres-rootful-host.log postgres-multinode-rootful.log postgres-wo-b4ns-direct.log postgres-wo-b4ns-host.log postgres-multinode-wo-b4ns.log postgres-w-b4ns.log postgres-multinode-w-b4ns.log /tmp/benchmark-plots/postgres.png
+      - run: python3 benchmark/block/block_plot.py block-rootful-direct.log block-rootful-host.log block-multinode-rootful.log block-wo-b4ns-direct.log block-wo-b4ns-host.log block-multinode-wo-b4ns.log block-w-b4ns.log block-multinode-w-b4ns.log /tmp/benchmark-plots/block.png
       - uses: actions/upload-artifact@v3
         with:
           name: benchmark-plots

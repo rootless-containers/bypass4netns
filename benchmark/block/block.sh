@@ -20,10 +20,52 @@ sleep 3
 systemctl --user status --no-pager containerd
 systemctl --user status --no-pager buildkit
 
+sudo nerdctl build -f ./Dockerfile -t $IMAGE_NAME .
 nerdctl build -f ./Dockerfile -t $IMAGE_NAME .
 
 BLOCK_SIZES=('1k' '32k' '128k' '512k' '1m' '32m' '128m' '512m' '1g')
 HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
+
+echo "===== Benchmark: block rooful via NetNS ====="
+(
+  set +e
+  sudo nerdctl rm -f block-server
+  sudo nerdctl rm -f block-client
+  set -ex
+
+  sudo nerdctl run -d --name block-server -v $(pwd):/var/www/html:ro $IMAGE_NAME nginx -g "daemon off;"
+  sudo nerdctl run -d --name block-client $IMAGE_NAME sleep infinity
+  SERVER_IP=$(sudo nerdctl exec block-server hostname -i)
+  LOG_NAME="block-rootful-direct.log"
+  rm -f $LOG_NAME
+  for BLOCK_SIZE in ${BLOCK_SIZES[@]}
+  do
+    sudo nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$SERVER_IP/blk-$BLOCK_SIZE >> $LOG_NAME
+  done
+
+  sudo nerdctl rm -f block-server
+  sudo nerdctl rm -f block-client
+)
+
+echo "===== Benchmark: block rootful via host ====="
+(
+  set +e
+  sudo nerdctl rm -f block-server
+  sudo nerdctl rm -f block-client
+  set -ex
+
+  sudo nerdctl run -d --name block-server -p 8080:80 -v $(pwd):/var/www/html:ro $IMAGE_NAME nginx -g "daemon off;"
+  sudo nerdctl run -d --name block-client $IMAGE_NAME sleep infinity
+  LOG_NAME="block-rootful-host.log"
+  rm -f $LOG_NAME
+  for BLOCK_SIZE in ${BLOCK_SIZES[@]}
+  do
+    sudo nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$HOST_IP:8080/blk-$BLOCK_SIZE >> $LOG_NAME
+  done
+
+  sudo nerdctl rm -f block-server
+  sudo nerdctl rm -f block-client
+)
 
 echo "===== Benchmark: block client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (

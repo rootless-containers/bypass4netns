@@ -9,8 +9,44 @@ source ~/.profile
 cd $(dirname $0)
 . ../../util.sh
 
+sudo nerdctl pull --quiet $POSTGRES_IMAGE
 nerdctl pull --quiet $POSTGRES_IMAGE
 HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
+
+echo "===== Benchmark: postgresql rootful via NetNS ====="
+(
+  set +e
+  sudo nerdctl rm -f psql-server
+  sudo nerdctl rm -f psql-client
+  set -ex
+
+  sudo nerdctl run -d --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
+  sudo nerdctl run -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
+  SERVER_IP=$(sudo nerdctl exec psql-server hostname -i)
+  sleep 5
+  sudo nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -i postgres
+  sudo nerdctl exec psql-client pgbench -h $SERVER_IP -U postgres -s 10 -t 1000 postgres > postgres-rootful-direct.log
+
+  sudo nerdctl rm -f psql-server
+  sudo nerdctl rm -f psql-client
+)
+
+echo "===== Benchmark: postgresql rootful via host ====="
+(
+  set +e
+  sudo nerdctl rm -f psql-server
+  sudo nerdctl rm -f psql-client
+  set -ex
+
+  sudo nerdctl run -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
+  sudo nerdctl run -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
+  sleep 5
+  sudo nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -i postgres
+  sudo nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-rootful-host.log
+
+  sudo nerdctl rm -f psql-server
+  sudo nerdctl rm -f psql-client
+)
 
 echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (

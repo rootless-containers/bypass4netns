@@ -4,6 +4,7 @@ cd $(dirname $0)
 . ../../util.sh
 
 set +e
+NAME="test" exec_lxc sudo nerdctl rm -f iperf3-server
 NAME="test" exec_lxc nerdctl rm -f iperf3-server
 sudo lxc rm -f test2
 
@@ -15,6 +16,7 @@ ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 
 set -eux -o pipefail
 
+NAME="test" exec_lxc sudo nerdctl pull --quiet $ALPINE_IMAGE
 NAME="test" exec_lxc nerdctl pull --quiet $ALPINE_IMAGE
 
 sudo lxc stop test
@@ -25,6 +27,23 @@ sleep 5
 
 TEST_ADDR=$(sudo lxc exec test -- hostname -I | sed 's/ //')
 TEST2_ADDR=$(sudo lxc exec test2 -- hostname -I | sed 's/ //')
+
+echo "===== Benchmark: iperf3 rootful with multinode via VXLAN ====="
+(
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged -d --name iperf3-server $ALPINE_IMAGE sleep infinity"
+  NAME="test" exec_lxc sudo nerdctl exec iperf3-server apk add --no-cache iperf3
+  NAME="test" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh iperf3-server $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR $TEST2_ADDR $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged -d --name iperf3-client $ALPINE_IMAGE sleep infinity"
+  NAME="test2" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh iperf3-client $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR $TEST_ADDR $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR
+  NAME="test2" exec_lxc sudo nerdctl exec iperf3-client apk add --no-cache iperf3
+
+  NAME="test" exec_lxc systemd-run --user --unit iperf3-server sudo nerdctl exec iperf3-server iperf3 -s
+  NAME="test2" exec_lxc sudo nerdctl exec iperf3-client iperf3 -c $TEST1_VXLAN_ADDR -i 0 --connect-timeout 1000 -J > iperf3-multinode-rootful.log
+  
+  NAME="test" exec_lxc sudo nerdctl rm -f iperf3-server
+  NAME="test" exec_lxc systemctl --user reset-failed
+  NAME="test2" exec_lxc sudo nerdctl rm -f iperf3-client
+)
 
 echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) with multinode via VXLAN ====="
 (

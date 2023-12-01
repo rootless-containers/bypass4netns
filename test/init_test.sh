@@ -51,4 +51,5 @@ echo "===== Prepare ====="
 
   # also enable rootful containerd for rootful container testing
   sudo systemctl enable --now containerd
+  sudo systemctl enable --now buildkit
 )

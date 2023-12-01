@@ -4,6 +4,7 @@ cd $(dirname $0)
 . ../../util.sh
 
 set +e
+NAME="test" exec_lxc sudo nerdctl rm -f redis-server
 NAME="test" exec_lxc nerdctl rm -f redis-server
 sudo lxc rm -f test2
 
@@ -16,6 +17,7 @@ REDIS_IMAGE="redis:${REDIS_VERSION}"
 
 set -eux -o pipefail
 
+NAME="test" exec_lxc sudo nerdctl pull --quiet $REDIS_IMAGE
 NAME="test" exec_lxc nerdctl pull --quiet $REDIS_IMAGE
 
 sudo lxc stop test
@@ -26,6 +28,18 @@ sleep 5
 
 TEST_ADDR=$(sudo lxc exec test -- hostname -I | sed 's/ //')
 TEST2_ADDR=$(sudo lxc exec test2 -- hostname -I | sed 's/ //')
+
+echo "===== Benchmark: redis rootful with multinode via VXLAN ====="
+(
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged --name redis-server -d $REDIS_IMAGE"
+  NAME="test" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh redis-server $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR $TEST2_ADDR $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged --name redis-client -d $REDIS_IMAGE  sleep infinity"
+  NAME="test2" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh redis-client $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR $TEST_ADDR $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR
+  NAME="test2" exec_lxc sudo nerdctl exec redis-client redis-benchmark -q -h $TEST1_VXLAN_ADDR --csv > redis-multinode-rootful.log
+  
+  NAME="test" exec_lxc sudo nerdctl rm -f redis-server
+  NAME="test2" exec_lxc sudo nerdctl rm -f redis-client
+)
 
 echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) with multinode via VXLAN ====="
 (
@@ -38,7 +52,6 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) w
   NAME="test" exec_lxc nerdctl rm -f redis-server
   NAME="test2" exec_lxc nerdctl rm -f redis-client
 )
-
 
 echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) with multinode ====="
 (

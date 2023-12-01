@@ -4,6 +4,7 @@ cd $(dirname $0)
 . ../../util.sh
 
 set +e
+NAME="test" exec_lxc sudo nerdctl rm -f block-server
 NAME="test" exec_lxc nerdctl rm -f block-server
 sudo lxc rm -f test2
 
@@ -23,6 +24,7 @@ NAME="test" exec_lxc systemctl --user restart buildkit
 sleep 3
 NAME="test" exec_lxc systemctl --user status --no-pager containerd
 NAME="test" exec_lxc systemctl --user status --no-pager buildkit
+NAME="test" exec_lxc /bin/bash -c "cd /home/ubuntu/bypass4netns/benchmark/block && sudo nerdctl build -f ./Dockerfile -t $IMAGE_NAME ."
 NAME="test" exec_lxc /bin/bash -c "cd /home/ubuntu/bypass4netns/benchmark/block && nerdctl build -f ./Dockerfile -t $IMAGE_NAME ."
 
 sudo lxc stop test
@@ -35,6 +37,23 @@ TEST_ADDR=$(sudo lxc exec test -- hostname -I | sed 's/ //')
 TEST2_ADDR=$(sudo lxc exec test2 -- hostname -I | sed 's/ //')
 
 NAME="test" exec_lxc /home/ubuntu/bypass4netns/benchmark/block/gen_blocks.sh
+
+echo "===== Benchmark: block rootful with multinode via VXLAN ====="
+(
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged -d --name block-server -v /home/ubuntu/bypass4netns/benchmark/block:/var/www/html:ro $IMAGE_NAME nginx -g \"daemon off;\""
+  NAME="test" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh block-server $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR $TEST2_ADDR $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && sudo nerdctl run -p 4789:4789/udp --privileged -d --name block-client $IMAGE_NAME sleep infinity"
+  NAME="test2" exec_lxc sudo /home/ubuntu/bypass4netns/test/setup_vxlan.sh block-client $TEST2_VXLAN_MAC $TEST2_VXLAN_ADDR $TEST_ADDR $TEST1_VXLAN_MAC $TEST1_VXLAN_ADDR
+  LOG_NAME="block-multinode-rootful.log"
+  rm -f $LOG_NAME
+  for BLOCK_SIZE in ${BLOCK_SIZES[@]}
+  do
+    NAME="test2" exec_lxc /bin/bash -c "sudo nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$TEST1_VXLAN_ADDR/blk-$BLOCK_SIZE" >> $LOG_NAME
+  done
+  
+  NAME="test" exec_lxc sudo nerdctl rm -f block-server
+  NAME="test2" exec_lxc sudo nerdctl rm -f block-client
+)
 
 echo "===== Benchmark: block client(w/o bypass4netns) server(w/o bypass4netns) with multinode via VXLAN ====="
 (
