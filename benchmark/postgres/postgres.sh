@@ -10,6 +10,7 @@ cd $(dirname $0)
 . ../../util.sh
 
 nerdctl pull --quiet $POSTGRES_IMAGE
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (
@@ -39,10 +40,9 @@ echo "===== Benchmark: postgresql client(w/o bypass4netns) server(w/o bypass4net
 
   nerdctl run -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
   nerdctl run -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 5
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -i postgres
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-wo-b4ns-host.log
+  nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -i postgres
+  nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-wo-b4ns-host.log
 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
@@ -61,11 +61,10 @@ echo "===== Benchmark: postgresql client(w/ bypass4netns) server(w/ bypass4netns
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
   nerdctl run --label nerdctl/bypass4netns=true -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   PID=$(nerdctl inspect psql-client | jq '.[0].State.Pid')
-  NAME="psql-client" exec_netns /bin/bash -c "until nc -z $SERVER_IP 15432; do sleep 1; done"
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -i postgres
-  nerdctl exec psql-client pgbench -h $SERVER_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-w-b4ns.log
+  NAME="psql-client" exec_netns /bin/bash -c "until nc -z $HOST_IP 15432; do sleep 1; done"
+  nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -i postgres
+  nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -t 1000 postgres > postgres-w-b4ns.log
 
   nerdctl rm -f psql-server
   nerdctl rm -f psql-client
@@ -82,8 +81,7 @@ echo "===== Benchmark: postgres client(w/ bypass4netns) server(w/ bypass4netns) 
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | awk '{print $1}')
-  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE

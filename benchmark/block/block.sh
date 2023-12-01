@@ -23,6 +23,7 @@ systemctl --user status --no-pager buildkit
 nerdctl build -f ./Dockerfile -t $IMAGE_NAME .
 
 BLOCK_SIZES=('1k' '32k' '128k' '512k' '1m' '32m' '128m' '512m' '1g')
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: block client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (
@@ -54,12 +55,11 @@ echo "===== Benchmark: block client(w/o bypass4netns) server(w/o bypass4netns) v
 
   nerdctl run -d --name block-server -p 8080:80 -v $(pwd):/var/www/html:ro $IMAGE_NAME nginx -g "daemon off;"
   nerdctl run -d --name block-client $IMAGE_NAME sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   LOG_NAME="block-wo-b4ns-host.log"
   rm -f $LOG_NAME
   for BLOCK_SIZE in ${BLOCK_SIZES[@]}
   do
-    nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$SERVER_IP:8080/blk-$BLOCK_SIZE >> $LOG_NAME
+    nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$HOST_IP:8080/blk-$BLOCK_SIZE >> $LOG_NAME
   done
 
   nerdctl rm -f block-server
@@ -79,12 +79,11 @@ echo "===== Benchmark: block client(w/ bypass4netns) server(w/ bypass4netns) via
 
   nerdctl run --label nerdctl/bypass4netns=true -d --name block-server -p 8080:80 -v $(pwd):/var/www/html:ro $IMAGE_NAME nginx -g "daemon off;"
   nerdctl run --label nerdctl/bypass4netns=true -d --name block-client $IMAGE_NAME sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   LOG_NAME="block-w-b4ns.log"
   rm -f $LOG_NAME
   for BLOCK_SIZE in ${BLOCK_SIZES[@]}
   do
-    nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$SERVER_IP:8080/blk-$BLOCK_SIZE >> $LOG_NAME
+    nerdctl exec block-client /bench -count $COUNT -thread-num 1 -url http://$HOST_IP:8080/blk-$BLOCK_SIZE >> $LOG_NAME
   done
 
   nerdctl rm -f block-server
@@ -102,8 +101,7 @@ echo "===== Benchmark: block client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | awk '{print $1}')
-  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d --name block-server -p 8080:80 -v $(pwd):/var/www/html:ro $IMAGE_NAME nginx -g "daemon off;"

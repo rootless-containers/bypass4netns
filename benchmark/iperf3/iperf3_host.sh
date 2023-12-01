@@ -7,7 +7,7 @@ source ~/.profile
 ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 nerdctl pull --quiet "${ALPINE_IMAGE}"
 
-HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 systemd-run --user --unit run-iperf3 iperf3 -s
 
 echo "===== Benchmark: netns -> host With bypass4netns ====="

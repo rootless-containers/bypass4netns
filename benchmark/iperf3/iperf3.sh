@@ -9,6 +9,7 @@ ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 source ~/.profile
 
 nerdctl pull --quiet $ALPINE_IMAGE
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
 (
@@ -52,9 +53,8 @@ echo "===== Benchmark: iperf3 client(w/o bypass4netns) server(w/o bypass4netns) 
 
   systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s
 
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 1
-  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-wo-b4ns-host.log
+  nerdctl exec iperf3-client iperf3 -c $HOST_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-wo-b4ns-host.log
 
   nerdctl rm -f iperf3-server
   nerdctl rm -f iperf3-client
@@ -81,9 +81,8 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) vi
 
   systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s
 
-  SERVER_IP=$(hostname -I | awk '{print $1}')
   sleep 1
-  nerdctl exec iperf3-client iperf3 -c $SERVER_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-w-b4ns.log
+  nerdctl exec iperf3-client iperf3 -c $HOST_IP -p 5202 -i 0 --connect-timeout 1000 -J > iperf3-w-b4ns.log
 
   nerdctl rm -f iperf3-server
   nerdctl rm -f iperf3-client
@@ -103,8 +102,7 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | awk '{print $1}')
-  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity

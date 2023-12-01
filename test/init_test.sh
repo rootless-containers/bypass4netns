@@ -48,4 +48,7 @@ echo "===== Prepare ====="
   make
   sudo rm -f /usr/local/bin/bypass4netns*
   sudo make install
+
+  # also enable rootful containerd for rootful container testing
+  sudo systemctl enable --now containerd
 )

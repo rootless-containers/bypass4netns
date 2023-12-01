@@ -8,6 +8,7 @@ REDIS_IMAGE="redis:${REDIS_VERSION}"
 
 source ~/.profile
 
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 nerdctl pull --quiet $REDIS_IMAGE
 
 echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) via intermediate NetNS ====="
@@ -36,8 +37,7 @@ echo "===== Benchmark: redis client(w/o bypass4netns) server(w/o bypass4netns) v
 
   nerdctl run -d -p 6380:6379 --name redis-server "${REDIS_IMAGE}"
   nerdctl run -d --name redis-client "${REDIS_IMAGE}" sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-wo-b4ns-host.log
+  nerdctl exec redis-client redis-benchmark -q -h $HOST_IP -p 6380 --csv > redis-wo-b4ns-host.log
   cat redis-wo-b4ns-host.log
 
   nerdctl rm -f redis-server
@@ -57,8 +57,7 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
   nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
-  SERVER_IP=$(hostname -I | awk '{print $1}')
-  nerdctl exec redis-client redis-benchmark -q -h $SERVER_IP -p 6380 --csv > redis-w-b4ns.log
+  nerdctl exec redis-client redis-benchmark -q -h $HOST_IP -p 6380 --csv > redis-w-b4ns.log
   cat redis-w-b4ns.log
 
   nerdctl rm -f redis-server
@@ -76,8 +75,7 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | awk '{print $1}')
-  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
+  systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
   nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE

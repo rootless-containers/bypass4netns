@@ -37,8 +37,21 @@ sleep 3
 set -e
 
 systemd-run --user --unit run-iperf3 iperf3 -s
-HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 ~/bypass4netns/test/seccomp.json.sh | tee /tmp/seccomp.json
+
+echo "===== rootful mode ===="
+(
+  set +e
+  sudo nerdctl rm -f test
+  set -ex
+
+  sudo nerdctl run -d --name test $ALPINE_IMAGE sleep infinity
+  sudo nerdctl exec test apk add --no-cache iperf3
+  sudo nerdctl exec test iperf3 -c $HOST_IP -t 1 --connect-timeout 1000 # it must success to connect.
+
+  sudo nerdctl rm -f test
+)
 
 echo "===== static linked binary test ====="
 (
@@ -191,7 +204,6 @@ echo "===== multinode test (single node) ===="
   systemctl --user reset-failed
   set -ex
 
-  HOST_IP=$(hostname -I | sed 's/ //')
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP --debug
   sleep 1
