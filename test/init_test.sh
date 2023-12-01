@@ -35,18 +35,6 @@ echo "===== Prepare ====="
   containerd-rootless-setuptool.sh install
   containerd-rootless-setuptool.sh install-buildkit
 
-  containerd-rootless-setuptool.sh install-fuse-overlayfs 
-  cat << EOF >> /home/$TEST_USER/.config/containerd/config.toml
-[proxy_plugins]
-  [proxy_plugins."fuse-overlayfs"]
-    type = "snapshot"
-    address = "/run/user/1000/containerd-fuse-overlayfs.sock"
-EOF
-
-  systemctl restart --user containerd
-  echo 'export CONTAINERD_SNAPSHOTTER="fuse-overlayfs"' >> ~/.profile
-  source ~/.profile
-
   # build nerdctl with bypass4netns
   curl -fsSL https://github.com/containerd/nerdctl/archive/refs/tags/v${NERDCTL_VERSION}.tar.gz | tar Cxz ~/
   cd ~/nerdctl-${NERDCTL_VERSION}
