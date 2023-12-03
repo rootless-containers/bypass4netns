@@ -104,7 +104,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        script: ["iperf3/iperf3_host", "iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached"]
+        script: ["iperf3/iperf3_host", "iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq"]
     steps:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
@@ -144,7 +144,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        script: ["iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached"]
+        script: ["iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq"]
     steps:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd (v5.19)
@@ -194,6 +194,8 @@ jobs:
       - run: python3 benchmark/block/block_plot.py block-multinode-rootful.log block-multinode-wo-b4ns.log block-multinode-w-b4ns.log /tmp/benchmark-plots/block-multinode.png
       - run: python3 benchmark/memcached/memcached_plot.py memcached-rootful-direct.log memcached-rootful-host.log memcached-wo-b4ns-direct.log memcached-wo-b4ns-host.log memcached-w-b4ns.log /tmp/benchmark-plots/memcached.png
       - run: python3 benchmark/memcached/memcached_plot.py memcached-multinode-rootful.log memcached-multinode-wo-b4ns.log memcached-multinode-w-b4ns.log /tmp/benchmark-plots/memcached-multinode.png
+      - run: python3 benchmark/rabbitmq/rabbitmq_plot.py rabbitmq-rootful-direct.log rabbitmq-rootful-host.log rabbitmq-wo-b4ns-direct.log rabbitmq-wo-b4ns-host.log rabbitmq-w-b4ns.log /tmp/benchmark-plots/rabbitmq.png
+      - run: python3 benchmark/rabbitmq/rabbitmq_plot.py rabbitmq-multinode-rootful.log rabbitmq-multinode-wo-b4ns.log rabbitmq-multinode-w-b4ns.log /tmp/benchmark-plots/rabbitmq-multinode.png
       - uses: actions/upload-artifact@v3
         with:
           name: benchmark-plots
