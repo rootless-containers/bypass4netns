@@ -9,6 +9,7 @@ ETCD_IMAGE="quay.io/coreos/etcd:${ETCD_VERSION}"
 BENCH_IMAGE="etcd-bench"
 
 source ~/.profile
+. ../param.bash
 
 # sometimes fail to pull images
 # this is workaround
@@ -22,7 +23,6 @@ systemctl --user status --no-pager buildkit
 sudo nerdctl build -f ./Dockerfile -t $BENCH_IMAGE .
 nerdctl build -f ./Dockerfile -t $BENCH_IMAGE .
 
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 sudo nerdctl pull --quiet $ETCD_IMAGE
 nerdctl pull --quiet $ETCD_IMAGE
 

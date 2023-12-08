@@ -1,8 +1,11 @@
 #!/bin/bash
 
+TEST_USER=ubuntu
+if [ -v GITHUB_WORKSPACE ]; then
+  TEST_USER=runner
+fi
 set -eu -o pipefail
 
-TEST_USER=ubuntu
 
 if [ "$(whoami)" != "$TEST_USER" ]; then
     su $TEST_USER -c $0
@@ -16,7 +19,17 @@ echo "===== Prepare ====="
 (
   set -x
  
-  sudo cp -r /host ~/bypass4netns
+  # for lxc
+  if [ -d /host ]; then
+    sudo cp -r /host ~/bypass4netns
+  fi
+
+  # for github actions runner
+  if [ $TEST_USER == "runner" ]; then
+    cd ../
+    cp -r bypass4netns ~/bypass4netns
+  fi
+
   sudo chown -R $TEST_USER:$TEST_USER ~/bypass4netns
 
   sudo apt-get update

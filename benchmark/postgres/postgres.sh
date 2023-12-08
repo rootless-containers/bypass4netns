@@ -8,10 +8,10 @@ POSTGRES_IMAGE="postgres:$POSTGRES_VERSION"
 source ~/.profile
 cd $(dirname $0)
 . ../../util.sh
+. ../param.bash
 
 sudo nerdctl pull --quiet $POSTGRES_IMAGE
 nerdctl pull --quiet $POSTGRES_IMAGE
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: postgresql rootful via NetNS ====="
 (

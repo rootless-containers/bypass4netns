@@ -8,8 +8,8 @@ PERF_IMAGE="pivotalrabbitmq/perf-test:$PERF_VERSION"
 
 source ~/.profile
 cd $(dirname $0)
+. ../param.bash
 
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 sudo nerdctl pull --quiet $RABBITMQ_IMAGE
 sudo nerdctl pull --quiet $PERF_IMAGE
 nerdctl pull --quiet $RABBITMQ_IMAGE

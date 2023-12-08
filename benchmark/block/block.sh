@@ -7,6 +7,7 @@ IMAGE_NAME="block"
 COUNT="10"
 
 source ~/.profile
+. ../param.bash
 
 ./gen_blocks.sh
 
@@ -24,7 +25,6 @@ sudo nerdctl build -f ./Dockerfile -t $IMAGE_NAME .
 nerdctl build -f ./Dockerfile -t $IMAGE_NAME .
 
 BLOCK_SIZES=('1k' '32k' '128k' '512k' '1m' '32m' '128m' '512m' '1g')
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: block rooful via NetNS ====="
 (

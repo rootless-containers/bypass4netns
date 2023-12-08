@@ -9,6 +9,7 @@ BENCH_IMAGE="mysql-bench"
 source ~/.profile
 cd $(dirname $0)
 . ../../util.sh
+. ../param.bash
 
 # sometimes fail to pull images
 # this is workaround
@@ -24,7 +25,6 @@ nerdctl build -f ./Dockerfile -t $BENCH_IMAGE .
 
 sudo nerdctl pull --quiet $MYSQL_IMAGE
 nerdctl pull --quiet $MYSQL_IMAGE
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: mysql rootful via NetNS ====="
 (

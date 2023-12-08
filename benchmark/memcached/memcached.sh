@@ -10,8 +10,8 @@ MEMTIRE_VERSION=2.0.0
 MEMTIRE_IMAGE="redislabs/memtier_benchmark:${MEMTIRE_VERSION}"
 
 source ~/.profile
+. ../param.bash
 
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 sudo nerdctl pull --quiet $MEMCACHED_IMAGE
 sudo nerdctl pull --quiet $MEMTIRE_IMAGE
 nerdctl pull --quiet $MEMCACHED_IMAGE

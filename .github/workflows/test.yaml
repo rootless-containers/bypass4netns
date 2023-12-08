@@ -204,3 +204,12 @@ jobs:
         with:
           name: benchmark-plots
           path: /tmp/benchmark-plots
+
+  bench-script:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - run: sudo ip a add 192.168.6.2/32 dev eth0
+      - run: hostname -I
+      - run: ./test/init_test.sh
+      - run: ~/bypass4netns/benchmark/run_bench.sh

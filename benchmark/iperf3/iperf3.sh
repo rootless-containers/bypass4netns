@@ -7,10 +7,10 @@ cd $(dirname $0)
 ALPINE_IMAGE="public.ecr.aws/docker/library/alpine:3.16"
 
 source ~/.profile
+. ../param.bash
 
 sudo nerdctl pull --quiet $ALPINE_IMAGE
 nerdctl pull --quiet $ALPINE_IMAGE
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 
 echo "===== Benchmark: iperf3 rootful via NetNS ====="
 (

@@ -7,8 +7,8 @@ REDIS_VERSION=7.2.3
 REDIS_IMAGE="redis:${REDIS_VERSION}"
 
 source ~/.profile
+. ../param.bash
 
-HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 sudo nerdctl pull --quiet $REDIS_IMAGE
 nerdctl pull --quiet $REDIS_IMAGE
 
