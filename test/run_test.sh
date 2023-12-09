@@ -40,6 +40,9 @@ systemd-run --user --unit run-iperf3 iperf3 -s
 HOST_IP=$(HOST=$(hostname -I); for i in ${HOST[@]}; do echo $i | grep -q "192.168.6."; if [ $? -eq 0 ]; then echo $i; fi; done)
 ~/bypass4netns/test/seccomp.json.sh | tee /tmp/seccomp.json
 
+sudo journalctl --rotate
+sudo journalctl --vacuum-time=1s
+
 echo "===== rootful mode ===="
 (
   set +e

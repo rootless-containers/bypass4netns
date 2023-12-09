@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -31,9 +30,6 @@ func main() {
 	//fmt.Printf("thread-num = %d\n", *threadNum)
 	//fmt.Printf("count = %d\n", *count)
 
-	// disable connection pool
-	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = -1
-
 	resultsChan := make(chan BenchmarkResult, *count)
 
 	for i := 0; i < *threadNum; i++ {
@@ -55,6 +51,8 @@ func main() {
 }
 
 func bench(url string, count int, resultChan chan BenchmarkResult) {
+	bufferSize := 1024 * 1024 * 128 // 128 MiB
+	buffer := make([]byte, bufferSize)
 	result := BenchmarkResult{
 		Url:                url,
 		Count:              count,
@@ -81,17 +79,20 @@ func bench(url string, count int, resultChan chan BenchmarkResult) {
 				fmt.Printf("unexpected status code %d", resp.StatusCode)
 				panic("error")
 			} else {
-				var buffer bytes.Buffer
-
-				writtenSize, err := io.Copy(&buffer, resp.Body)
-				if err != nil {
-					fmt.Printf("failed Copy() err=%q", err)
-					panic("error")
+				for {
+					readSize, err := resp.Body.Read(buffer)
+					if err != nil && err != io.EOF {
+						fmt.Printf("failed Copy() err=%q", err)
+						panic("error")
+					}
+					if readSize == 0 {
+						end := time.Now()
+						elapsed := end.Sub(start).Seconds()
+						result.TotalElapsedSecond += elapsed
+						break
+					}
+					result.TotalSize += int64(readSize)
 				}
-				end := time.Now()
-				elapsed := end.Sub(start).Seconds()
-				result.TotalSize += writtenSize
-				result.TotalElapsedSecond += elapsed
 			}
 			resp.Body.Close()
 			break
