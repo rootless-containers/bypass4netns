@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - master
-      - ng-b4ns
+      - main
       - release/**
   pull_request: null
   workflow_dispatch:
