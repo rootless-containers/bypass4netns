@@ -15,10 +15,10 @@ if [ "$1" == "SYNC" ]; then
   sudo cp -r /host ~/bypass4netns
   sudo chown -R ubuntu:ubuntu ~/bypass4netns
   cd ~/bypass4netns
+  echo "source code is updated"
   exec $0 "FORK"
   exit 0
 fi
-echo "source code is updated"
 cd ~/bypass4netns
 rm -f bypass4netns bypass4netnsd
 make
@@ -104,29 +104,14 @@ echo "===== '--ignore' option test ====="
   systemctl --user stop run-bypass4netns.service
 )
 
-# nerdctl image build not working.
-#[+] Building 10.1s (2/2) FINISHED                                                            
-# => [internal] load build definition from Dockerfile                                    0.0s
-# => => transferring dockerfile: 274B                                                    0.0s
-# => ERROR [internal] load metadata for public.ecr.aws/docker/library/alpine:3.16       10.0s
-#------
-# > [internal] load metadata for public.ecr.aws/docker/library/alpine:3.16:
-#------
-#Dockerfile:1
-#--------------------
-#   1 | >>> FROM public.ecr.aws/docker/library/alpine:3.16
-#   2 |     
-#   3 |     RUN apk add python3
-#--------------------
-#error: failed to solve: public.ecr.aws/docker/library/alpine:3.16: failed to do request: Head "https://public.ecr.aws/v2/docker/library/alpine/manifests/3.16": dial tcp: lookup public.ecr.aws on 10.0.2.3:53: read udp 10.0.2.100:47105->10.0.2.3:53: i/o timeout
-#echo "===== connect(2),sendto(2) test ====="
-#(
-#  systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8" -p 8080:5201
-#  set -x
-#  cd $SCRIPT_DIR/test
-#  /bin/bash test_syscalls.sh /tmp/seccomp.json $(cat /tmp/host_ip)
-#  systemctl --user stop run-bypass4netns.service
-#)
+echo "===== connect(2) test ====="
+(
+  systemd-run --user --unit run-bypass4netns bypass4netns --ignore "127.0.0.0/8,10.0.0.0/8" -p 8080:5201
+  set -x
+  cd $SCRIPT_DIR
+  /bin/bash test_syscalls.sh /tmp/seccomp.json $HOST_IP
+  systemctl --user stop run-bypass4netns.service
+)
 
 echo "===== Test bypass4netnsd ====="
 (
