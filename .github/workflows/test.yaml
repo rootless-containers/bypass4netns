@@ -1,16 +1,20 @@
+---
 name: Test
 on:
   push:
     branches:
       - master
-      - 'release/**'
-  pull_request:
+      - main
+      - release/**
+  pull_request: null
+  workflow_dispatch:
+
 jobs:
   golangci-lint:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v3.0.2
+      - uses: actions/checkout@v4.1.1
         with:
           fetch-depth: 1
       - uses: actions/setup-go@v3
@@ -18,22 +22,194 @@ jobs:
           go-version: 1.19.x
       - run: sudo apt-get update && sudo apt-get install -y libseccomp-dev
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3.2.0
+        uses: golangci/golangci-lint-action@v3.7.0
         with:
-          version: v1.49.0
+          version: v1.55.2
           args: --verbose
-  ubuntu-2204:
-    name: "Ubuntu 22.04"
-    # nested virtualization is only available on macOS hosts
-    runs-on: macos-12
-    timeout-minutes: 30
+
+  create-lxc-image:
+    name: create-lxc-image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4.1.1
 
-      - name: "Cache ~/.vagrant.d/boxes"
-        uses: actions/cache@v3
+      - uses: actions/cache/restore@v3
+        id: cache-restore
         with:
-          path: ~/.vagrant.d/boxes
-          key: vagrant-${{ hashFiles('Vagrantfile*') }}
+         key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+         path: /tmp/test-image.tar.zst
+         lookup-only: true
 
-      - run: vagrant up
+      - name: setup lxd
+        id: s1
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: ./test/setup_lxd.sh
+
+      - name: launch lxc container
+        id: s2
+        if: steps.s1.conclusion == 'success'
+        run: ./test/launch_test_lxc.sh
+
+      - name: install dependencies and build
+        id: s3
+        if: steps.s2.conclusion == 'success'
+        run: sudo lxc exec test -- sudo --login --user ubuntu /host/test/init_test.sh
+
+      - name: export image
+        id: s4
+        if: steps.s3.conclusion == 'success'
+        run: ./test/export_lxc_image.sh test
+
+      - uses: actions/cache/save@v3
+        id: s5
+        if: steps.s4.conclusion == 'success'
+        with:
+          key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+          path: /tmp/test-image.tar.zst
+
+  test:
+    runs-on: ubuntu-22.04
+    needs: create-lxc-image
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./test/launch_test_lxc.sh test-export
+      - name: run test
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/test/run_test.sh SYNC"
+      # some source codes may be updated. re-export new image.
+      - name: export image
+        run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./test/export_lxc_image.sh test
+      - uses: actions/cache/save@v3
+        with:
+          key: lxc-image-${{ github.sha }}
+          path: /tmp/test-image.tar.zst
+      #- name: debug
+      #  run: ./debug.sh
+
+  benchmark:
+    runs-on: ubuntu-22.04
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        script: ["iperf3/iperf3_host", "iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-${{ github.sha }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./test/launch_test_lxc.sh test-export
+      - name: run benchmark (${{ matrix.script }})
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}.sh"
+      - name: upload plot
+        id: get_plot
+        if: matrix.script != 'iperf3/iperf3_host'
+        run: |
+          mkdir /tmp/benchmark-results
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-rootful-direct.log /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-rootful-host.log /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-direct.log /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-host.log /tmp/benchmark-results/.
+          sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-w-b4ns.log /tmp/benchmark-results/.
+      - uses: actions/upload-artifact@v3
+        if: steps.get_plot.conclusion == 'success'
+        with:
+          name: benchmark-results
+          path: /tmp/benchmark-results
+
+
+  benchmark-multinode:
+    runs-on: ubuntu-22.04
+    needs: test
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        script: ["iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
+      - uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+         key: lxc-image-${{ github.sha }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./test/launch_test_lxc.sh test-export
+      - name: run benchmark (${{ matrix.script }})
+        run: ./benchmark/${{ matrix.script }}_multinode.sh
+      - name: upload plot
+        run: |
+          mkdir /tmp/benchmark-results
+          cp benchmark/${{ matrix.script }}-multinode-rootful.log /tmp/benchmark-results/.
+          cp benchmark/${{ matrix.script }}-multinode-wo-b4ns.log /tmp/benchmark-results/.
+          cp benchmark/${{ matrix.script }}-multinode-w-b4ns.log /tmp/benchmark-results/.
+      - uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: /tmp/benchmark-results
+  
+  plot:
+    runs-on: ubuntu-22.04
+    needs: [benchmark, benchmark-multinode]
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - run: sudo apt update && sudo apt install python3 python3-pip
+      - run: pip3 install matplotlib numpy
+      - uses: actions/download-artifact@v3
+        with:
+          name: benchmark-results
+          path: ./
+      - run: mkdir /tmp/benchmark-plots
+      - run: python3 benchmark/redis/redis_plot.py redis-rootful-direct.log redis-rootful-host.log redis-wo-b4ns-direct.log redis-wo-b4ns-host.log redis-w-b4ns.log /tmp/benchmark-plots/redis.png
+      - run: python3 benchmark/redis/redis_plot.py redis-multinode-rootful.log redis-multinode-wo-b4ns.log redis-multinode-w-b4ns.log /tmp/benchmark-plots/redis-multinode.png
+      - run: python3 benchmark/iperf3/iperf3_plot.py iperf3-rootful-direct.log iperf3-rootful-host.log iperf3-wo-b4ns-direct.log iperf3-wo-b4ns-host.log iperf3-w-b4ns.log /tmp/benchmark-plots/iperf3.png
+      - run: python3 benchmark/iperf3/iperf3_plot.py iperf3-multinode-rootful.log iperf3-multinode-wo-b4ns.log iperf3-multinode-w-b4ns.log /tmp/benchmark-plots/iperf3-multinode.png
+      - run: python3 benchmark/postgres/postgres_plot.py postgres-rootful-direct.log postgres-rootful-host.log postgres-wo-b4ns-direct.log postgres-wo-b4ns-host.log postgres-w-b4ns.log /tmp/benchmark-plots/postgres.png
+      - run: python3 benchmark/postgres/postgres_plot.py postgres-multinode-rootful.log postgres-multinode-wo-b4ns.log postgres-multinode-w-b4ns.log /tmp/benchmark-plots/postgres-multinode.png
+      - run: python3 benchmark/block/block_plot.py block-rootful-direct.log block-rootful-host.log block-wo-b4ns-direct.log block-wo-b4ns-host.log block-w-b4ns.log /tmp/benchmark-plots/block.png
+      - run: python3 benchmark/block/block_plot.py block-multinode-rootful.log block-multinode-wo-b4ns.log block-multinode-w-b4ns.log /tmp/benchmark-plots/block-multinode.png
+      - run: python3 benchmark/memcached/memcached_plot.py memcached-rootful-direct.log memcached-rootful-host.log memcached-wo-b4ns-direct.log memcached-wo-b4ns-host.log memcached-w-b4ns.log /tmp/benchmark-plots/memcached.png
+      - run: python3 benchmark/memcached/memcached_plot.py memcached-multinode-rootful.log memcached-multinode-wo-b4ns.log memcached-multinode-w-b4ns.log /tmp/benchmark-plots/memcached-multinode.png
+      - run: python3 benchmark/rabbitmq/rabbitmq_plot.py rabbitmq-rootful-direct.log rabbitmq-rootful-host.log rabbitmq-wo-b4ns-direct.log rabbitmq-wo-b4ns-host.log rabbitmq-w-b4ns.log /tmp/benchmark-plots/rabbitmq.png
+      - run: python3 benchmark/rabbitmq/rabbitmq_plot.py rabbitmq-multinode-rootful.log rabbitmq-multinode-wo-b4ns.log rabbitmq-multinode-w-b4ns.log /tmp/benchmark-plots/rabbitmq-multinode.png
+      - run: python3 benchmark/etcd/etcd_plot.py etcd-rootful-direct.log etcd-rootful-host.log etcd-wo-b4ns-direct.log etcd-wo-b4ns-host.log etcd-w-b4ns.log /tmp/benchmark-plots/etcd.png
+      - run: python3 benchmark/etcd/etcd_plot.py etcd-multinode-rootful.log etcd-multinode-wo-b4ns.log etcd-multinode-w-b4ns.log /tmp/benchmark-plots/etcd-multinode.png
+      - run: python3 benchmark/mysql/mysql_plot.py mysql-rootful-direct.log mysql-rootful-host.log mysql-wo-b4ns-direct.log mysql-wo-b4ns-host.log mysql-w-b4ns.log /tmp/benchmark-plots/mysql.png
+      - run: python3 benchmark/mysql/mysql_plot.py mysql-multinode-rootful.log mysql-multinode-wo-b4ns.log mysql-multinode-w-b4ns.log /tmp/benchmark-plots/mysql-multinode.png
+      - uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-plots
+          path: /tmp/benchmark-plots
+
+  bench-script:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.1.1
+      - run: sudo ip a add 192.168.6.2/32 dev eth0
+      - run: hostname -I
+      - run: ./test/init_test.sh
+      - run: ~/bypass4netns/benchmark/run_bench.sh

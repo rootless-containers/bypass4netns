@@ -1,0 +1,13 @@
+FROM golang:1.21.3 as bench-builder
+
+COPY httpserver.go .
+# static link
+RUN CGO_ENABLED=0 go build -o /httpserver httpserver.go
+
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get upgrade -y
+COPY --from=bench-builder /httpserver /httpserver
+
+CMD ["/bin/bash", "-c", "sleep infinity"]
+

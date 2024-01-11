@@ -6,20 +6,31 @@ package bypass4netns
 import (
 	"bytes"
 	gocontext "context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
+	"github.com/coreos/etcd/client"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
+	"github.com/rootless-containers/bypass4netns/pkg/api/com"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/iproute2"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
+	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/tracer"
+	"github.com/rootless-containers/bypass4netns/pkg/util"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
+
+const ETCD_MULTINODE_PREFIX = "bypass4netns/multinode/"
 
 func closeStateFds(recvFds []int) {
 	for i := range recvFds {
@@ -70,14 +81,13 @@ func parseStateFds(stateFds []string, recvFds []int) (uintptr, error) {
 }
 
 // readProcMem read data from memory of specified pid process at the spcified offset.
-func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
+func (h *notifHandler) readProcMem(pid int, offset uint64, len uint64) ([]byte, error) {
 	buffer := make([]byte, len) // PATH_MAX
 
-	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDONLY, 0o777)
+	memfd, err := h.openMem(pid)
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(memfd)
 
 	size, err := unix.Pread(memfd, buffer, int64(offset))
 	if err != nil {
@@ -85,6 +95,134 @@ func readProcMem(pid uint32, offset uint64, len uint64) ([]byte, error) {
 	}
 
 	return buffer[:size], nil
+}
+
+// writeProcMem writes data to memory of specified pid process at the specified offset.
+func (h *notifHandler) writeProcMem(pid int, offset uint64, buf []byte) error {
+	memfd, err := h.openMem(pid)
+	if err != nil {
+		return err
+	}
+
+	size, err := unix.Pwrite(memfd, buf, int64(offset))
+	if err != nil {
+		return err
+	}
+	if len(buf) != size {
+		return fmt.Errorf("data is not written successfully. expected size=%d actual size=%d", len(buf), size)
+	}
+
+	return nil
+}
+
+func (h *notifHandler) openMem(pid int) (int, error) {
+	if memfd, ok := h.memfds[pid]; ok {
+		return memfd, nil
+	}
+	memfd, err := unix.Open(fmt.Sprintf("/proc/%d/mem", pid), unix.O_RDWR, 0o777)
+	if err != nil {
+		logrus.WithField("pid", pid).Warn("failed to open mem due to permission error. retrying with agent.")
+		newMemfd, err := openMemWithNSEnter(pid)
+		if err != nil {
+			return 0, fmt.Errorf("failed to open mem with agent (pid=%d)", pid)
+		}
+		logrus.WithField("pid", pid).Info("succeeded to open mem with agent. continue to process")
+		memfd = newMemfd
+	}
+	h.memfds[pid] = memfd
+
+	return memfd, nil
+}
+
+func openMemWithNSEnter(pid int) (int, error) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	// configure timeout
+	timeout := &syscall.Timeval{
+		Sec:  0,
+		Usec: 500 * 1000,
+	}
+	err = syscall.SetsockoptTimeval(fds[0], syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, timeout)
+	if err != nil {
+		return 0, fmt.Errorf("failed to set receive timeout")
+	}
+	err = syscall.SetsockoptTimeval(fds[1], syscall.SOL_SOCKET, syscall.SO_SNDTIMEO, timeout)
+	if err != nil {
+		return 0, fmt.Errorf("failed to set send timeout")
+	}
+
+	fd1File := os.NewFile(uintptr(fds[0]), "")
+	defer fd1File.Close()
+	fd1Conn, err := net.FileConn(fd1File)
+	if err != nil {
+		return 0, err
+	}
+	_ = fd1Conn
+
+	selfExe, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	nsenter, err := exec.LookPath("nsenter")
+	if err != nil {
+		return 0, err
+	}
+	nsenterFlags := []string{
+		"-t", strconv.Itoa(int(pid)),
+		"-F",
+	}
+	selfPid := os.Getpid()
+	ok, err := util.SameUserNS(int(pid), selfPid)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check sameUserNS(%d, %d)", pid, selfPid)
+	}
+	if !ok {
+		nsenterFlags = append(nsenterFlags, "-U", "--preserve-credentials")
+	}
+	nsenterFlags = append(nsenterFlags, "--", selfExe, fmt.Sprintf("--mem-nsenter-pid=%d", pid))
+	cmd := exec.CommandContext(gocontext.TODO(), nsenter, nsenterFlags...)
+	cmd.ExtraFiles = []*os.File{os.NewFile(uintptr(fds[1]), "")}
+	stdout := bytes.Buffer{}
+	cmd.Stdout = &stdout
+	err = cmd.Start()
+	if err != nil {
+		return 0, fmt.Errorf("failed to exec mem open agent %q", err)
+	}
+	memfd, recvMsgs, err := util.RecvMsg(fd1Conn)
+	if err != nil {
+		logrus.Infof("stdout=%q", stdout.String())
+		return 0, fmt.Errorf("failed to receive message")
+	}
+	logrus.Debugf("recvMsgs=%s", string(recvMsgs))
+	err = cmd.Wait()
+	if err != nil {
+		return 0, err
+	}
+
+	return memfd, nil
+}
+
+func OpenMemWithNSEnterAgent(pid uint32) error {
+	// fd 3 should be passed socket pair
+	fdFile := os.NewFile(uintptr(3), "")
+	defer fdFile.Close()
+	fdConn, err := net.FileConn(fdFile)
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to open conn")
+	}
+	memPath := fmt.Sprintf("/proc/%d/mem", pid)
+	memfd, err := unix.Open(memPath, unix.O_RDWR, 0o777)
+	if err != nil {
+		logrus.WithError(err).Fatalf("failed to open %s", memPath)
+	}
+	err = util.SendMsg(fdConn, memfd, []byte(fmt.Sprintf("opened %s", memPath)))
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to send message")
+	}
+	return nil
 }
 
 func handleNewMessage(sockfd int) (uintptr, *specs.ContainerProcessState, error) {
@@ -141,15 +279,74 @@ type context struct {
 	resp    *libseccomp.ScmpNotifResp
 }
 
-// getFdInProcess get the file descriptor in other process
-func getFdInProcess(pid, targetFd int) (int, error) {
+func (h *notifHandler) getPidFdInfo(pid int) (*pidInfo, error) {
+	// retrieve pidfd from cache
+	if pidfd, ok := h.pidInfos[pid]; ok {
+		return &pidfd, nil
+	}
+
 	targetPidfd, err := pidfd.Open(int(pid), 0)
+	if err == nil {
+		info := pidInfo{
+			pidType: PROCESS,
+			pidfd:   targetPidfd,
+			tgid:    pid, // process's pid is equal to its tgid
+		}
+		h.pidInfos[pid] = info
+		return &info, nil
+	}
+
+	// pid can be thread and pidfd_open fails with thread's pid.
+	// retrieve process's pid (tgid) from /proc/<pid>/status and retry to get pidfd with the tgid.
+	logrus.Warnf("pidfd Open failed: pid=%d err=%q, this pid maybe thread and retrying with tgid", pid, err)
+	st, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %d's status err=%q", pid, err)
+	}
+
+	nextTgid := -1
+	for _, s := range strings.Split(string(st), "\n") {
+		if strings.Contains(s, "Tgid") {
+			tgids := strings.Split(s, "\t")
+			if len(tgids) < 2 {
+				return nil, fmt.Errorf("unexpected /proc/%d/status len=%q status=%q", pid, len(tgids), string(st))
+			}
+			tgid, err := strconv.Atoi(tgids[1])
+			if err != nil {
+				return nil, fmt.Errorf("unexpected /proc/%d/status err=%q status=%q", pid, err, string(st))
+			}
+			nextTgid = tgid
+		}
+		if nextTgid > 0 {
+			break
+		}
+	}
+	if nextTgid < 0 {
+		logrus.Errorf("cannot get Tgid from /proc/%d/status status=%q", pid, string(st))
+	}
+	targetPidfd, err = pidfd.Open(nextTgid, 0)
+	if err != nil {
+		return nil, fmt.Errorf("pidfd Open failed with Tgid: pid=%d %s", nextTgid, err)
+	}
+
+	logrus.Infof("successfully got pidfd for pid=%d tgid=%d", pid, nextTgid)
+	info := pidInfo{
+		pidType: THREAD,
+		pidfd:   targetPidfd,
+		tgid:    nextTgid,
+	}
+	h.pidInfos[pid] = info
+	return &info, nil
+}
+
+// getFdInProcess get the file descriptor in other process
+func (h *notifHandler) getFdInProcess(pid, targetFd int) (int, error) {
+	targetPidfd, err := h.getPidFdInfo(pid)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd Open failed: %s", err)
 	}
-	defer syscall.Close(int(targetPidfd))
 
-	fd, err := targetPidfd.GetFd(targetFd, 0)
+	fd, err := targetPidfd.pidfd.GetFd(targetFd, 0)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd GetFd failed: %s", err)
 	}
@@ -179,418 +376,92 @@ func getSocketArgs(sockfd int) (int, int, int, error) {
 	return sock_domain, sock_type, sock_protocol, nil
 }
 
-// duplicateSocketOnHost duplicate socket in other process to socket on host.
-// retun values are (duplicated socket fd, target socket fd in current process, error)
-func duplicateSocketOnHost(pid int, _sockfd int) (int, int, error) {
-	sockfd, err := getFdInProcess(pid, _sockfd)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get fd %s", err)
-	}
-
-	sock_domain, sock_type, sock_protocol, err := getSocketArgs(sockfd)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get socket args %s", err)
-	}
-
-	switch sock_domain {
-	case syscall.AF_INET, syscall.AF_INET6:
-	default:
-		return 0, 0, fmt.Errorf("expected AF_INET or AF_INET6, got %d", sock_domain)
-	}
-
-	// only SOCK_STREAM and SOCK_DGRAM are acceptable.
-	if sock_type != syscall.SOCK_STREAM && sock_type != syscall.SOCK_DGRAM {
-		return 0, 0, fmt.Errorf("SOCK_STREAM and SOCK_DGRAM are supported")
-	}
-
-	sockfd2, err := syscall.Socket(sock_domain, sock_type, sock_protocol)
-	if err != nil {
-		return 0, 0, fmt.Errorf("socket failed: %s", err)
-	}
-
-	return sockfd2, sockfd, nil
-}
-
-func readSockaddrFromProcess(pid uint32, offset uint64, addrlen uint64) (*sockaddr, error) {
-	buf, err := readProcMem(pid, offset, addrlen)
+func (h *notifHandler) readSockaddrFromProcess(pid int, offset uint64, addrlen uint64) (*sockaddr, error) {
+	buf, err := h.readProcMem(pid, offset, addrlen)
 	if err != nil {
 		return nil, fmt.Errorf("failed readProcMem pid %v offset 0x%x: %s", pid, offset, err)
 	}
 	return newSockaddr(buf)
 }
 
-// manageSocket manages socketStatus and return next injecting file descriptor
-// return values are (continue?, injecting fd)
-func (h *notifHandler) manageSocket(destAddr net.IP, pid int, sockfd int, logger *logrus.Entry) (bool, int) {
-	destIsIgnored := h.nonBypassable.Contains(destAddr)
-	key := fmt.Sprintf("%d:%d", pid, sockfd)
-	sockStatus, ok := h.socketInfo.status[key]
+func (h *notifHandler) registerSocket(pid int, sockfd int, syscallName string) (*socketStatus, error) {
+	logger := logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd, "syscall": syscallName})
+	proc, ok := h.processes[pid]
 	if !ok {
-		if destIsIgnored {
-			// the socket has never been bypassed and no need to bypass
-			logger.Debugf("%s is ignored, skipping.", destAddr.String())
-			return false, 0
-		} else {
-			// the socket has never been bypassed and need to bypass
-			sockfd2, sockfd, err := duplicateSocketOnHost(pid, sockfd)
-			if err != nil {
-				logger.Errorf("duplicating socket failed: %s", err)
-				return false, 0
-			}
+		proc = newProcessStatus()
+		h.processes[pid] = proc
+		logger.Debug("process is registered")
+	}
 
-			sockStatus := socketStatus{
-				state:     Bypassed,
-				fdInNetns: sockfd,
-				fdInHost:  sockfd2,
-			}
-			h.socketInfo.status[key] = sockStatus
-			logger.Debugf("start to bypass fdInHost=%d fdInNetns=%d", sockStatus.fdInHost, sockStatus.fdInNetns)
-			return true, sockfd2
-		}
+	sock, ok := proc.sockets[sockfd]
+	if ok {
+		logger.Warn("socket is already registered")
+		return sock, nil
+	}
+
+	// If the pid is thread, its process can have corresponding socket
+	procInfo, ok := h.pidInfos[int(pid)]
+	if ok && procInfo.pidType == THREAD {
+		return nil, fmt.Errorf("unexpected procInfo")
+	}
+
+	sockFdHost, err := h.getFdInProcess(int(pid), sockfd)
+	if err != nil {
+		return nil, err
+	}
+	defer syscall.Close(sockFdHost)
+
+	sockDomain, sockType, sockProtocol, err := getSocketArgs(sockFdHost)
+	sock = newSocketStatus(pid, sockfd, sockDomain, sockType, sockProtocol)
+	if err != nil {
+		// non-socket fd is not bypassable
+		sock.state = NotBypassable
+		logger.Debugf("failed to get socket args err=%q", err)
 	} else {
-		if sockStatus.state == Bypassed {
-			if !destIsIgnored {
-				// the socket has been bypassed and continue to be bypassed
-				logger.Debugf("continue to bypass")
-				return false, 0
-			} else {
-				// the socket has been bypassed and need to switch back to socket in netns
-				logger.Debugf("switchback fdInHost(%d) -> fdInNetns(%d)", sockStatus.fdInHost, sockStatus.fdInNetns)
-				sockStatus.state = SwitchBacked
-
-				h.socketInfo.status[key] = sockStatus
-				return true, sockStatus.fdInNetns
-			}
-		} else if sockStatus.state == SwitchBacked {
-			if destIsIgnored {
-				// the socket has been switchbacked(not bypassed) and no need to be bypassed
-				logger.Debugf("continue not bypassing")
-				return false, 0
-			} else {
-				// the socket has been switchbacked(not bypassed) and need to bypass again
-				logger.Debugf("bypass again fdInNetns(%d) -> fdInHost(%d)", sockStatus.fdInNetns, sockStatus.fdInHost)
-				sockStatus.state = Bypassed
-
-				h.socketInfo.status[key] = sockStatus
-				return true, sockStatus.fdInHost
-			}
+		if sockDomain != syscall.AF_INET && sockDomain != syscall.AF_INET6 {
+			// non IP sockets are not handled.
+			sock.state = NotBypassable
+			logger.Debugf("socket domain=0x%x", sockDomain)
+		} else if sockType != syscall.SOCK_STREAM {
+			// only accepting TCP socket
+			sock.state = NotBypassable
+			logger.Debugf("socket type=0x%x", sockType)
 		} else {
-			panic(fmt.Errorf("unexpected state :%d", sockStatus.state))
+			// only newly created socket is allowed.
+			_, err := syscall.Getpeername(sockFdHost)
+			if err == nil {
+				logger.Infof("socket is already connected. socket is created via accept or forked")
+				sock.state = NotBypassable
+			}
 		}
 	}
-}
 
-// handleSysBind handles syscall bind(2).
-// If binding port is the target of port-forwarding,
-// it creates and configures including bind(2) a socket on host.
-// Then, handler replaces container's socket to created one.
-func (h *notifHandler) handleSysBind(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "bind", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
-	if err != nil {
-		logger.Errorf("failed to read sockaddr from process: %v", err)
-		return
+	proc.sockets[sockfd] = sock
+	if sock.state == NotBypassable {
+		logger.Debugf("socket is registered (state=%s)", sock.state)
+	} else {
+		logger.Infof("socket is registered (state=%s)", sock.state)
 	}
 
-	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
+	return sock, nil
+}
 
-	// TODO: get port-fowrad mapping from nerdctl
-	fwdPort, ok := h.forwardingPorts[int(sa.Port)]
+func (h *notifHandler) getSocket(pid int, sockfd int) *socketStatus {
+	proc, ok := h.processes[pid]
 	if !ok {
-		logger.Infof("port=%d is not target of port forwarding.", sa.Port)
-		return
+		return nil
 	}
-
-	sockfd2, sockfd, err := duplicateSocketOnHost(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
-	if err != nil {
-		logger.Errorf("duplicating socket failed: %s", err)
-		return
-	}
-	defer syscall.Close(sockfd)
-	defer syscall.Close(sockfd2)
-
-	err = h.socketInfo.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		logger.Errorf("configure socketoptions failed: %s", err)
-		return
-	}
-
-	var bind_addr syscall.Sockaddr
-
-	switch sa.Family {
-	case syscall.AF_INET:
-		var addr [4]byte
-		for i := 0; i < 4; i++ {
-			addr[i] = sa.IP[i]
-		}
-		bind_addr = &syscall.SockaddrInet4{
-			Port: fwdPort.HostPort,
-			Addr: addr,
-		}
-	case syscall.AF_INET6:
-		var addr [16]byte
-		for i := 0; i < 16; i++ {
-			addr[i] = sa.IP[i]
-		}
-		bind_addr = &syscall.SockaddrInet6{
-			Port:   fwdPort.HostPort,
-			ZoneId: sa.ScopeID,
-			Addr:   addr,
-		}
-	}
-
-	err = syscall.Bind(sockfd2, bind_addr)
-	if err != nil {
-		logger.Errorf("bind failed: %s", err)
-		return
-	}
-
-	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfd2),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
-	}
-
-	err = addfd.ioctlNotifAddFd(ctx.notifFd)
-	if err != nil {
-		logger.Errorf("ioctl NotifAddFd failed: %s", err)
-		return
-	}
-
-	logger.Infof("binding for %d:%d is done", fwdPort.HostPort, fwdPort.ChildPort)
-
-	ctx.resp.Flags &= (^uint32(SeccompUserNotifFlagContinue))
+	sock := proc.sockets[sockfd]
+	return sock
 }
 
-// handleSysClose handles `close(2)` and delete recorded socket options.
-func (h *notifHandler) handleSysClose(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "close", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	logger.Trace("handle")
-	h.socketInfo.deleteSocket(ctx, logger)
-}
-
-// handleSysConnect handles syscall connect(2).
-// If destination is outside of container network,
-// it creates and configures a socket on host.
-// Then, handler replaces container's socket to created one.
-func (h *notifHandler) handleSysConnect(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "connect", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
-	if err != nil {
-		logger.Errorf("failed to read sockaddr from process: %v", err)
+func (h *notifHandler) removeSocket(pid int, sockfd int) {
+	defer logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd}).Debugf("socket is removed")
+	proc, ok := h.processes[pid]
+	if !ok {
 		return
 	}
-
-	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
-
-	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
-
-	if !cont {
-		return
-	}
-	defer syscall.Close(sockfd2)
-
-	// configure socket if switched
-	err = h.socketInfo.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		logger.Errorf("configure socketoptions failed: %s", err)
-		return
-	}
-
-	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfd2),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
-	}
-
-	err = addfd.ioctlNotifAddFd(ctx.notifFd)
-	if err != nil {
-		logger.Errorf("ioctl NotifAddFd failed: %s", err)
-		return
-	}
-}
-
-type msgHdrName struct {
-	Name    uint64
-	Namelen uint32
-}
-
-// handleSysSendto handles syscall sendmsg(2).
-// If destination is outside of container network,
-// it creates and configures a socket on host.
-// Then, handler replaces container's socket to created one.
-// This handles only SOCK_DGRAM sockets.
-func (h *notifHandler) handleSysSendmsg(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "sendmsg", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	msghdr := msgHdrName{}
-	buf, err := readProcMem(ctx.req.Pid, ctx.req.Data.Args[1], 12)
-	if err != nil {
-		logger.Errorf("failed readProcMem pid %v offset 0x%x: %s", ctx.req.Pid, ctx.req.Data.Args[1], err)
-	}
-
-	reader := bytes.NewReader(buf)
-	err = binary.Read(reader, binary.LittleEndian, &msghdr)
-	if err != nil {
-		logger.Errorf("cannnot cast byte array to Msghdr: %s", err)
-	}
-
-	// addrlen == 0 means the socket is already connected
-	if msghdr.Namelen == 0 {
-		return
-	}
-
-	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
-	if err != nil {
-		logger.Errorf("failed to get fd: %s", err)
-	}
-	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
-
-	if err != nil {
-		logger.Errorf("failed to get socket args: %v", err)
-		return
-	}
-
-	switch sock_domain {
-	case syscall.AF_INET, syscall.AF_INET6:
-	default:
-		logger.Debugf("only supported AF_INET, AF_INET6: %d", sock_domain)
-		return
-	}
-
-	if sock_type != syscall.SOCK_DGRAM {
-		logger.Debug("only SOCK_DGRAM sockets are handled")
-		return
-	}
-
-	addrOffset := uint64(msghdr.Name)
-	sa, err := readSockaddrFromProcess(ctx.req.Pid, addrOffset, uint64(msghdr.Namelen))
-	if err != nil {
-		logger.Errorf("failed to read sockaddr from process: %v", err)
-		return
-	}
-
-	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
-
-	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
-	defer syscall.Close(sockfd2)
-
-	if !cont {
-		return
-	}
-
-	// configure socket if switched
-	err = h.socketInfo.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		logger.Errorf("setsocketoptions failed: %s", err)
-		return
-	}
-
-	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfd2),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
-	}
-
-	err = addfd.ioctlNotifAddFd(ctx.notifFd)
-	if err != nil {
-		logger.Errorf("ioctl NotifAddFd failed: %s", err)
-		return
-	}
-}
-
-// handleSysSendto handles syscall sendto(2).
-// If destination is outside of container network,
-// it creates and configures a socket on host.
-// Then, handler replaces container's socket to created one.
-// This handles only SOCK_DGRAM sockets.
-func (h *notifHandler) handleSysSendto(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "sendto", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	// addrlen == 0 is send(2)
-	if ctx.req.Data.Args[5] == 0 {
-		return
-	}
-
-	sockfd, err := getFdInProcess(int(ctx.req.Pid), int(ctx.req.Data.Args[0]))
-	if err != nil {
-		logger.Errorf("failed to get fd: %s", err)
-	}
-	defer syscall.Close(sockfd)
-	sock_domain, sock_type, _, err := getSocketArgs(sockfd)
-
-	if err != nil {
-		logger.Errorf("failed to get socket args: %v", err)
-		return
-	}
-
-	if sock_domain != syscall.AF_INET {
-		logger.Debugf("only supported AF_INET: %d", sock_domain)
-		return
-	}
-
-	if sock_type != syscall.SOCK_DGRAM {
-		logger.Debug("only SOCK_DGRAM sockets are handled")
-		return
-	}
-
-	sa, err := readSockaddrFromProcess(ctx.req.Pid, ctx.req.Data.Args[4], ctx.req.Data.Args[5])
-	if err != nil {
-		logger.Errorf("failed to read sockaddr from process: %v", err)
-		return
-	}
-
-	logger.Infof("handle port=%d, ip=%v", sa.Port, sa.IP)
-
-	// Retrieve next injecting file descriptor
-	cont, sockfd2 := h.manageSocket(sa.IP, int(ctx.req.Pid), int(ctx.req.Data.Args[0]), logger)
-	defer syscall.Close(sockfd2)
-
-	if !cont {
-		return
-	}
-
-	// configure socket if switched
-	err = h.socketInfo.configureSocket(ctx, sockfd2)
-	if err != nil {
-		syscall.Close(sockfd2)
-		logger.Errorf("configure socketoptions failed: %s", err)
-		return
-	}
-
-	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfd2),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
-	}
-
-	err = addfd.ioctlNotifAddFd(ctx.notifFd)
-	if err != nil {
-		logger.Errorf("ioctl NotifAddFd failed: %s", err)
-		return
-	}
-}
-
-// handleSyssetsockopt handles `setsockopt(2)` and records options.
-// Recorded options are used in `handleSysConnect` or `handleSysBind` via `setSocketoptions` to configure created sockets.
-func (h *notifHandler) handleSysSetsockopt(ctx *context) {
-	logger := logrus.WithFields(logrus.Fields{"syscall": "setsockopt", "pid": ctx.req.Pid, "sockfd": ctx.req.Data.Args[0]})
-	logger.Debugf("handle")
-	err := h.socketInfo.recordSocketOption(ctx, logger)
-	if err != nil {
-		logger.Errorf("recordSocketOption failed: %s", err)
-	}
+	delete(proc.sockets, sockfd)
 }
 
 // handleReq handles seccomp notif requests and configures responses.
@@ -605,20 +476,93 @@ func (h *notifHandler) handleReq(ctx *context) {
 
 	ctx.resp.Flags |= SeccompUserNotifFlagContinue
 
+	// ensure pid is registered in notifHandler.pidInfos
+	pidInfo, err := h.getPidFdInfo(int(ctx.req.Pid))
+	if err != nil {
+		logrus.Errorf("failed to get pidfd err=%q", err)
+		return
+	}
+
+	// threads shares file descriptors in the same process space.
+	// so use tgid as pid to process socket file descriptors
+	pid := pidInfo.tgid
+	if pidInfo.pidType == THREAD {
+		logrus.Debugf("pid %d is thread. use process's tgid %d as pid", ctx.req.Pid, pid)
+	}
+
+	// cleanup sockets when the process exit.
+	if syscallName == "_exit" || syscallName == "exit_group" {
+		if pidInfo, ok := h.pidInfos[int(ctx.req.Pid)]; ok {
+			syscall.Close(int(pidInfo.pidfd))
+			delete(h.pidInfos, int(ctx.req.Pid))
+		}
+		if pidInfo.pidType == THREAD {
+			logrus.WithFields(logrus.Fields{"pid": ctx.req.Pid, "tgid": pid}).Infof("thread is removed")
+		}
+
+		if pidInfo.pidType == PROCESS {
+			delete(h.processes, pid)
+			if memfd, ok := h.memfds[pid]; ok {
+				syscall.Close(memfd)
+				delete(h.memfds, pid)
+			}
+			logrus.WithFields(logrus.Fields{"pid": pid}).Infof("process is removed")
+		}
+		return
+	}
+
+	sockfd := int(ctx.req.Data.Args[0])
+	// remove socket when closed
+	if syscallName == "close" {
+		h.removeSocket(pid, sockfd)
+		return
+	}
+
+	sock := h.getSocket(pid, sockfd)
+	if sock == nil {
+		sock, err = h.registerSocket(pid, sockfd, syscallName)
+		if err != nil {
+			logrus.Errorf("failed to register socket pid %d sockfd %d: %s", pid, sockfd, err)
+			return
+		}
+	}
+
+	switch sock.state {
+	case NotBypassable:
+		// sometimes close(2) is not called for the fd.
+		// To handle such condition, re-register fd when connect is called for not bypassable fd.
+		if syscallName == "connect" {
+			h.removeSocket(pid, sockfd)
+			sock, err = h.registerSocket(pid, sockfd, syscallName)
+			if err != nil {
+				logrus.Errorf("failed to re-register socket pid %d sockfd %d: %s", pid, sockfd, err)
+				return
+			}
+		}
+		if sock.state != NotBypassed {
+			return
+		}
+
+		// when sock.state == NotBypassed, continue
+	case Bypassed:
+		if syscallName == "getpeername" {
+			sock.handleSysGetpeername(h, ctx)
+		}
+		return
+	default:
+	}
+
 	switch syscallName {
 	case "bind":
-		h.handleSysBind(ctx)
-	case "close":
-		// handling close(2) may cause performance degradation
-		h.handleSysClose(ctx)
+		sock.handleSysBind(pid, h, ctx)
 	case "connect":
-		h.handleSysConnect(ctx)
-	case "sendmsg":
-		h.handleSysSendmsg(ctx)
-	case "sendto":
-		h.handleSysSendto(ctx)
+		sock.handleSysConnect(h, ctx)
 	case "setsockopt":
-		h.handleSysSetsockopt(ctx)
+		sock.handleSysSetsockopt(pid, h, ctx)
+	case "fcntl":
+		sock.handleSysFcntl(ctx)
+	case "getpeername":
+		// already handled
 	default:
 		logrus.Errorf("Unknown syscall %q", syscallName)
 		// TODO: error handle
@@ -678,6 +622,8 @@ type ForwardPortMapping struct {
 
 type Handler struct {
 	socketPath               string
+	comSocketPath            string
+	tracerAgentLogPath       string
 	ignoredSubnets           []net.IPNet
 	ignoredSubnetsAutoUpdate bool
 	readyFd                  int
@@ -687,12 +633,14 @@ type Handler struct {
 }
 
 // NewHandler creates new seccomp notif handler
-func NewHandler(socketPath string) *Handler {
+func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string) *Handler {
 	handler := Handler{
-		socketPath:      socketPath,
-		ignoredSubnets:  []net.IPNet{},
-		forwardingPorts: map[int]ForwardPortMapping{},
-		readyFd:         -1,
+		socketPath:         socketPath,
+		comSocketPath:      comSocketPath,
+		tracerAgentLogPath: tracerAgentLogPath,
+		ignoredSubnets:     []net.IPNet{},
+		forwardingPorts:    map[int]ForwardPortMapping{},
+		readyFd:            -1,
 	}
 
 	return &handler
@@ -729,13 +677,61 @@ func (h *Handler) SetReadyFd(fd int) error {
 	return nil
 }
 
+type MultinodeConfig struct {
+	Enable           bool
+	EtcdAddress      string
+	HostAddress      string
+	etcdClientConfig client.Config
+	etcdClient       client.Client
+	etcdKeyApi       client.KeysAPI
+}
+
+type C2CConnectionHandleConfig struct {
+	Enable       bool
+	TracerEnable bool
+}
+
 type notifHandler struct {
 	fd                      libseccomp.ScmpFd
 	state                   *specs.ContainerProcessState
 	nonBypassable           *nonbypassable.NonBypassable
 	nonBypassableAutoUpdate bool
-	forwardingPorts         map[int]ForwardPortMapping
-	socketInfo              socketInfo
+
+	// key is child port
+	forwardingPorts map[int]ForwardPortMapping
+
+	// key is pid
+	processes map[int]*processStatus
+
+	// key is destination address e.g. "192.168.1.1:1000"
+	containerInterfaces map[string]containerInterface
+	c2cConnections      *C2CConnectionHandleConfig
+	multinode           *MultinodeConfig
+
+	// cache /proc/<pid>/mem's fd to reduce latency. key is pid, value is fd
+	memfds map[int]int
+
+	// cache pidfd to reduce latency. key is pid.
+	pidInfos map[int]pidInfo
+}
+
+type containerInterface struct {
+	containerID     string
+	hostPort        int
+	lastCheckedUnix int64
+}
+
+type pidInfoPidType int
+
+const (
+	PROCESS pidInfoPidType = iota
+	THREAD
+)
+
+type pidInfo struct {
+	pidType pidInfoPidType
+	pidfd   pidfd.PidFd
+	tgid    int
 }
 
 func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
@@ -743,10 +739,9 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		fd:              libseccomp.ScmpFd(fd),
 		state:           state,
 		forwardingPorts: map[int]ForwardPortMapping{},
-		socketInfo: socketInfo{
-			options: map[string][]socketOption{},
-			status:  map[string]socketStatus{},
-		},
+		processes:       map[int]*processStatus{},
+		memfds:          map[int]int{},
+		pidInfos:        map[int]pidInfo{},
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate
@@ -760,7 +755,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 }
 
 // StartHandle starts seccomp notif handler
-func (h *Handler) StartHandle() {
+func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeConfig *MultinodeConfig) {
 	logrus.Info("Waiting for seccomp file descriptors")
 	l, err := net.Listen("unix", h.socketPath)
 	if err != nil {
@@ -776,6 +771,9 @@ func (h *Handler) StartHandle() {
 		}
 		syscall.Close(h.readyFd)
 	}
+
+	// prepare tracer agent
+	var tracerAgent *tracer.Tracer = nil
 
 	for {
 		conn, err := l.Accept()
@@ -799,6 +797,248 @@ func (h *Handler) StartHandle() {
 
 		logrus.Infof("Received new seccomp fd: %v", newFd)
 		notifHandler := h.newNotifHandler(newFd, state)
+		notifHandler.c2cConnections = c2cConfig
+		notifHandler.multinode = multinodeConfig
+		if notifHandler.multinode.Enable {
+			notifHandler.multinode.etcdClientConfig = client.Config{
+				Endpoints:               []string{notifHandler.multinode.EtcdAddress},
+				Transport:               client.DefaultTransport,
+				HeaderTimeoutPerRequest: 2 * time.Second,
+			}
+			notifHandler.multinode.etcdClient, err = client.New(notifHandler.multinode.etcdClientConfig)
+			if err != nil {
+				logrus.WithError(err).Fatal("failed to create etcd client")
+			}
+			notifHandler.multinode.etcdKeyApi = client.NewKeysAPI(notifHandler.multinode.etcdClient)
+		}
+
+		// not to run multiple tracerAgent.
+		// TODO: prepare only one tracerAgent in Handler
+		if c2cConfig.TracerEnable && !multinodeConfig.Enable && tracerAgent == nil {
+			tracerAgent = tracer.NewTracer(h.tracerAgentLogPath)
+			err = tracerAgent.StartTracer(gocontext.TODO(), state.Pid)
+			if err != nil {
+				logrus.WithError(err).Fatalf("failed to start tracer")
+			}
+			fwdPorts := []int{}
+			for _, v := range notifHandler.forwardingPorts {
+				fwdPorts = append(fwdPorts, v.ChildPort)
+			}
+			err = tracerAgent.RegisterForwardPorts(fwdPorts)
+			if err != nil {
+				logrus.WithError(err).Fatalf("failed to register port")
+			}
+			logrus.WithField("fwdPorts", fwdPorts).Info("registered ports to tracer agent")
+
+			// check tracer agent is ready
+			for _, v := range fwdPorts {
+				dst := fmt.Sprintf("127.0.0.1:%d", v)
+				addr, err := tracerAgent.ConnectToAddress([]string{dst})
+				if err != nil {
+					logrus.WithError(err).Warnf("failed to connect to %s", dst)
+					continue
+				}
+				if len(addr) != 1 || addr[0] != dst {
+					logrus.Fatalf("failed to connect to %s", dst)
+					continue
+				}
+				logrus.Debugf("successfully connected to %s", dst)
+			}
+			logrus.Infof("tracer is ready")
+		} else {
+			logrus.Infof("tracer is disabled")
+		}
+
+		// TODO: these goroutines shoud be launched only once.
+		ready := make(chan bool, 10)
+		if notifHandler.multinode.Enable {
+			go notifHandler.startBackgroundMultinodeTask(ready)
+		} else if notifHandler.c2cConnections.Enable {
+			go notifHandler.startBackgroundC2CConnectionHandleTask(ready, h.comSocketPath, tracerAgent)
+		} else {
+			ready <- true
+		}
+
+		// wait for background tasks becoming ready
+		<-ready
+		logrus.Info("background task is ready. start to handle")
 		go notifHandler.handle()
+	}
+}
+
+func (h *notifHandler) startBackgroundC2CConnectionHandleTask(ready chan bool, comSocketPath string, tracerAgent *tracer.Tracer) {
+	initDone := false
+	logrus.Info("Started bypass4netns background task")
+	comClient, err := com.NewComClient(comSocketPath)
+	if err != nil {
+		logrus.Fatalf("failed to create ComClient: %q", err)
+	}
+	err = comClient.Ping(gocontext.TODO())
+	if err != nil {
+		logrus.Fatalf("failed to connect to bypass4netnsd: %q", err)
+	}
+	logrus.Infof("Successfully connected to bypass4netnsd")
+	ifLastUpdateUnix := int64(0)
+	for {
+		if ifLastUpdateUnix+10 < time.Now().Unix() {
+			addrs, err := iproute2.GetAddressesInNetNS(gocontext.TODO(), h.state.Pid)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to get addresses")
+				return
+			}
+			ifs, err := iproute2AddressesToComInterfaces(addrs)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to convert addresses")
+				return
+			}
+			containerIfs := &com.ContainerInterfaces{
+				ContainerID:     h.state.State.ID,
+				Interfaces:      ifs,
+				ForwardingPorts: map[int]int{},
+			}
+			for _, v := range h.forwardingPorts {
+				containerIfs.ForwardingPorts[v.ChildPort] = v.HostPort
+			}
+			logrus.Debugf("Interfaces = %v", containerIfs)
+			_, err = comClient.PostInterface(gocontext.TODO(), containerIfs)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to post interfaces")
+			} else {
+				logrus.Infof("successfully posted updated interfaces")
+				ifLastUpdateUnix = time.Now().Unix()
+			}
+		}
+		containerInterfaces, err := comClient.ListInterfaces(gocontext.TODO())
+		if err != nil {
+			logrus.WithError(err).Warn("failed to list container interfaces")
+		}
+
+		containerIf := map[string]containerInterface{}
+		for _, cont := range containerInterfaces {
+			for contPort, hostPort := range cont.ForwardingPorts {
+				for _, intf := range cont.Interfaces {
+					if intf.IsLoopback {
+						continue
+					}
+					for _, addr := range intf.Addresses {
+						// ignore ipv6 address
+						if addr.IP.To4() == nil {
+							continue
+						}
+						dstAddr := fmt.Sprintf("%s:%d", addr.IP, contPort)
+						contIf, ok := h.containerInterfaces[dstAddr]
+						if ok && contIf.lastCheckedUnix+10 > time.Now().Unix() {
+							containerIf[dstAddr] = contIf
+							continue
+						}
+						if h.c2cConnections.TracerEnable {
+							addrRes, err := tracerAgent.ConnectToAddress([]string{dstAddr})
+							if err != nil {
+								logrus.WithError(err).Debugf("failed to connect to %s", dstAddr)
+								continue
+							}
+							if len(addrRes) != 1 || addrRes[0] != dstAddr {
+								logrus.Debugf("failed to connect to %s", dstAddr)
+								continue
+							}
+							logrus.Debugf("successfully connected to %s", dstAddr)
+						}
+						containerIf[dstAddr] = containerInterface{
+							containerID:     cont.ContainerID,
+							hostPort:        hostPort,
+							lastCheckedUnix: time.Now().Unix(),
+						}
+						logrus.Infof("%s -> 127.0.0.1:%d is registered", dstAddr, hostPort)
+					}
+				}
+			}
+		}
+		h.containerInterfaces = containerIf
+
+		// once the interfaces are registered, it is ready to handle connections
+		if !initDone {
+			initDone = true
+			ready <- true
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func iproute2AddressesToComInterfaces(addrs iproute2.Addresses) ([]com.Interface, error) {
+	comIntfs := []com.Interface{}
+	for _, intf := range addrs {
+		comIntf := com.Interface{
+			Name:       intf.IfName,
+			Addresses:  []net.IPNet{},
+			IsLoopback: intf.LinkType == "loopback",
+		}
+		hwAddr, err := net.ParseMAC(intf.Address)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse HWAddress: %w", err)
+		}
+		comIntf.HWAddr = hwAddr
+		for _, addr := range intf.AddrInfos {
+			ip, ipNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", addr.Local, addr.PrefixLen))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse addr_info: %w", err)
+			}
+			ipNet.IP = ip
+			comIntf.Addresses = append(comIntf.Addresses, *ipNet)
+		}
+
+		comIntfs = append(comIntfs, comIntf)
+	}
+
+	return comIntfs, nil
+}
+
+func (h *notifHandler) startBackgroundMultinodeTask(ready chan bool) {
+	initDone := false
+	ifLastUpdateUnix := int64(0)
+	for {
+		if ifLastUpdateUnix+10 < time.Now().Unix() {
+			ifs, err := iproute2.GetAddressesInNetNS(gocontext.TODO(), h.state.Pid)
+			if err != nil {
+				logrus.WithError(err).Errorf("failed to get addresses")
+				return
+			}
+			for _, intf := range ifs {
+				// ignore non-ethernet interface
+				if intf.LinkType != "ether" {
+					continue
+				}
+				for _, addr := range intf.AddrInfos {
+					// ignore non-IPv4 address
+					if addr.Family != "inet" {
+						continue
+					}
+					for _, v := range h.forwardingPorts {
+						containerAddr := fmt.Sprintf("%s:%d", addr.Local, v.ChildPort)
+						hostAddr := fmt.Sprintf("%s:%d", h.multinode.HostAddress, v.HostPort)
+						// Remove entries with timeout
+						// TODO: Remove related entries when exiting.
+						opts := &client.SetOptions{
+							TTL: time.Second * 15,
+						}
+						_, err := h.multinode.etcdKeyApi.Set(gocontext.TODO(), ETCD_MULTINODE_PREFIX+containerAddr, hostAddr, opts)
+						if err != nil {
+							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
+						} else {
+							logrus.Infof("Registered %s -> %s", containerAddr, hostAddr)
+						}
+					}
+				}
+			}
+			ifLastUpdateUnix = time.Now().Unix()
+
+			// once the interfaces are registered, it is ready to handle connections
+			if !initDone {
+				initDone = true
+				ready <- true
+			}
+		}
+
+		time.Sleep(1 * time.Second)
 	}
 }

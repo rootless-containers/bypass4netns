@@ -11,7 +11,7 @@ const (
 	SocketName = "bypass4netns.sock"
 )
 
-var SyscallsToBeNotified = []string{"bind", "close", "connect", "sendmsg", "sendto", "setsockopt"}
+var SyscallsToBeNotified = []string{"bind", "close", "connect", "setsockopt", "fcntl", "_exit", "exit_group", "getpeername"}
 
 func GetDefaultSeccompProfile(listenerPath string) *specs.LinuxSeccomp {
 	tmpl := specs.LinuxSeccomp{

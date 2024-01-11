@@ -1,0 +1,38 @@
+config: {}
+networks:
+- config:
+    ipv4.address: 192.168.6.1/24
+    ipv4.nat: "true"
+    ipv6.address: none
+  description: ""
+  name: lxdbr0
+  type: bridge
+  project: default
+storage_pools:
+- config:
+    size: 30GiB
+    source: /var/snap/lxd/common/lxd/disks/default.img
+  description: ""
+  name: default
+  driver: btrfs
+profiles:
+- config: {}
+  description: Default LXD profile
+  devices:
+    eth0:
+      name: eth0
+      network: lxdbr0
+      type: nic
+    root:
+      path: /
+      pool: default
+      type: disk
+  name: default
+projects:
+- config:
+    features.images: "true"
+    features.networks: "true"
+    features.profiles: "true"
+    features.storage.volumes: "true"
+  description: Default LXD project
+  name: default

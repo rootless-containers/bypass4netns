@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nsagent/types"
+	"github.com/rootless-containers/bypass4netns/pkg/util"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
@@ -45,6 +46,33 @@ func (x *NonBypassable) Contains(ip net.IP) bool {
 	return false
 }
 
+//func (x *NonBypassable) IsInterfaceIPAddress(ip net.IP) bool {
+//	x.mu.RLock()
+//	defer x.mu.RUnlock()
+//	for _, intf := range x.interfaces {
+//		for _, intfIP := range intf.Addresses {
+//			if intfIP.IP.Equal(ip) {
+//				return true
+//			}
+//		}
+//	}
+//
+//	return false
+//}
+//
+//func (x *NonBypassable) GetInterfaces() []com.Interface {
+//	x.mu.RLock()
+//	defer x.mu.RUnlock()
+//	ips := append([]com.Interface{}, x.interfaces...)
+//	return ips
+//}
+//
+//func (x *NonBypassable) GetLastUpdateUnix() int64 {
+//	x.mu.RLock()
+//	defer x.mu.RUnlock()
+//	return x.lastUpdateUnix
+//}
+
 // WatchNS watches the NS associated with the PID and updates the internal dynamic list on receiving SIGHUP.
 func (x *NonBypassable) WatchNS(ctx context.Context, pid int) error {
 	selfExe, err := os.Executable()
@@ -61,7 +89,7 @@ func (x *NonBypassable) WatchNS(ctx context.Context, pid int) error {
 		"-n",
 	}
 	selfPid := os.Getpid()
-	ok, err := sameUserNS(pid, selfPid)
+	ok, err := util.SameUserNS(pid, selfPid)
 	if err != nil {
 		return fmt.Errorf("failed to check sameUserNS(%d, %d)", pid, selfPid)
 	}
@@ -128,18 +156,4 @@ func (x *NonBypassable) watchNS(r io.Reader) {
 			logrus.WithError(err).Warn("Dynamic non-bypassable list: Error while parsing nsagent messages")
 		}
 	}
-}
-
-func sameUserNS(pidX, pidY int) (bool, error) {
-	nsX := fmt.Sprintf("/proc/%d/ns/user", pidX)
-	nsY := fmt.Sprintf("/proc/%d/ns/user", pidY)
-	nsXResolved, err := os.Readlink(nsX)
-	if err != nil {
-		return false, err
-	}
-	nsYResolved, err := os.Readlink(nsY)
-	if err != nil {
-		return false, err
-	}
-	return nsXResolved == nsYResolved, nil
 }

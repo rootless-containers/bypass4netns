@@ -10,21 +10,36 @@ import (
 	"time"
 
 	"github.com/rootless-containers/bypass4netns/pkg/api"
+	"github.com/rootless-containers/bypass4netns/pkg/api/com"
+	"github.com/rootless-containers/bypass4netns/pkg/util"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
 type Driver struct {
 	BypassExecutablePath string
+	ComSocketPath        string
 	bypass               map[string]api.BypassStatus
 	lock                 sync.RWMutex
+	containerInterfaces  map[string]com.ContainerInterfaces
+	interfacesLock       sync.RWMutex
+	HandleC2CEnable      bool
+	TracerEnable         bool
+	MultinodeEnable      bool
+	MultinodeEtcdAddress string
+	MultinodeHostAddress string
 }
 
-func NewDriver(execPath string) *Driver {
+func NewDriver(execPath string, comSocketPath string) *Driver {
 	return &Driver{
 		BypassExecutablePath: execPath,
+		ComSocketPath:        comSocketPath,
 		bypass:               map[string]api.BypassStatus{},
 		lock:                 sync.RWMutex{},
+		containerInterfaces:  map[string]com.ContainerInterfaces{},
+		interfacesLock:       sync.RWMutex{},
+		TracerEnable:         false,
+		MultinodeEnable:      false,
 	}
 }
 
@@ -41,9 +56,13 @@ func (d *Driver) ListBypass() []api.BypassStatus {
 }
 
 func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
-	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(spec.ID)})
+	logger := logrus.WithFields(logrus.Fields{"ID": util.ShrinkID(spec.ID)})
 	logger.Info("Starting bypass")
 	b4nnArgs := []string{}
+
+	if logger.Logger.GetLevel() == logrus.DebugLevel {
+		b4nnArgs = append(b4nnArgs, "--debug")
+	}
 
 	if spec.SocketPath != "" {
 		socketOption := fmt.Sprintf("--socket=%s", spec.SocketPath)
@@ -66,6 +85,20 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 
 	for _, subnet := range spec.IgnoreSubnets {
 		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--ignore=%s", subnet))
+	}
+
+	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
+	if d.HandleC2CEnable {
+		b4nnArgs = append(b4nnArgs, "--handle-c2c-connections")
+	}
+	if d.TracerEnable {
+		b4nnArgs = append(b4nnArgs, "--tracer=true")
+	}
+
+	if d.MultinodeEnable {
+		b4nnArgs = append(b4nnArgs, "--multinode=true")
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--multinode-etcd-address=%s", d.MultinodeEtcdAddress))
+		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--multinode-host-address=%s", d.MultinodeHostAddress))
 	}
 
 	// prepare pipe for ready notification
@@ -109,7 +142,7 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 }
 
 func (d *Driver) StopBypass(id string) error {
-	logger := logrus.WithFields(logrus.Fields{"ID": shrinkID(id)})
+	logger := logrus.WithFields(logrus.Fields{"ID": util.ShrinkID(id)})
 	logger.Infof("Stopping bypass")
 	d.lock.Lock()
 	defer d.lock.Unlock()
@@ -146,7 +179,49 @@ func (d *Driver) StopBypass(id string) error {
 	delete(d.bypass, id)
 	logger.Info("Stopped bypass")
 
+	// remove the container's interfaces
+	d.DeleteInterface(id)
+
 	return nil
+}
+
+func (d *Driver) ListInterfaces() map[string]com.ContainerInterfaces {
+	d.interfacesLock.RLock()
+	defer d.interfacesLock.RUnlock()
+
+	ifs := map[string]com.ContainerInterfaces{}
+	// copy map
+	for k := range d.containerInterfaces {
+		ifs[k] = d.containerInterfaces[k]
+	}
+
+	return ifs
+}
+
+func (d *Driver) GetInterface(id string) *com.ContainerInterfaces {
+	d.interfacesLock.RLock()
+	defer d.interfacesLock.RUnlock()
+
+	ifs, ok := d.containerInterfaces[id]
+	if !ok {
+		return nil
+	}
+
+	return &ifs
+}
+
+func (d *Driver) PostInterface(id string, containerIfs *com.ContainerInterfaces) {
+	d.interfacesLock.Lock()
+	defer d.interfacesLock.Unlock()
+
+	d.containerInterfaces[id] = *containerIfs
+}
+
+func (d *Driver) DeleteInterface(id string) {
+	d.interfacesLock.Lock()
+	defer d.interfacesLock.Unlock()
+
+	delete(d.containerInterfaces, id)
 }
 
 // waitForReady is from libpod
@@ -182,16 +257,4 @@ func waitForReadyFD(cmdPid int, r *os.File) error {
 		}
 	}
 	return nil
-}
-
-// shrinkID shrinks id to short(12 chars) id
-// 6d9bcda7cebd551ddc9e3173d2139386e21b56b241f8459c950ef58e036f6bd8
-// to
-// 6d9bcda7cebd
-func shrinkID(id string) string {
-	if len(id) < 12 {
-		return id
-	}
-
-	return id[0:12]
 }

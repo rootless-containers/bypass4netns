@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/alpine:3.15
+FROM public.ecr.aws/docker/library/alpine:3.16
 
 RUN apk add python3
 
