@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cd $(dirname $0)
-. ../util.sh
+. ./util.sh
 
 set -eux -o pipefail
 

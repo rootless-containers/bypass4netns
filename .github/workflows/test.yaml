@@ -41,29 +41,29 @@ jobs:
          path: /tmp/test-image.tar.zst
          lookup-only: true
 
-      - name: setup lxd (v5.19)
+      - name: setup lxd
         id: s1
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        run: ./setup_lxd.sh
+        run: ./test/setup_lxd.sh
 
       - name: launch lxc container
-        id: s6
+        id: s2
         if: steps.s1.conclusion == 'success'
-        run: ./launch_test_lxc.sh
+        run: ./test/launch_test_lxc.sh
 
       - name: install dependencies and build
-        id: s7
-        if: steps.s6.conclusion == 'success'
+        id: s3
+        if: steps.s2.conclusion == 'success'
         run: sudo lxc exec test -- sudo --login --user ubuntu /host/test/init_test.sh
 
       - name: export image
-        id: s8
-        if: steps.s7.conclusion == 'success'
-        run: ./export_lxc_image.sh test
+        id: s4
+        if: steps.s3.conclusion == 'success'
+        run: ./test/export_lxc_image.sh test
 
       - uses: actions/cache/save@v3
-        id: s11
-        if: steps.s8.conclusion == 'success'
+        id: s5
+        if: steps.s4.conclusion == 'success'
         with:
           key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
           path: /tmp/test-image.tar.zst
@@ -74,8 +74,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4.1.1
-      - name: setup lxd (v5.19)
-        run: ./setup_lxd.sh
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v3
         id: cache-restore
         with:
@@ -85,12 +85,12 @@ jobs:
       - name: load lxc image
         run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
       - name: launch lxc container
-        run: ./launch_test_lxc.sh test-export
+        run: ./test/launch_test_lxc.sh test-export
       - name: run test
         run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/test/run_test.sh SYNC"
       # some source codes may be updated. re-export new image.
       - name: export image
-        run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./export_lxc_image.sh test
+        run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./test/export_lxc_image.sh test
       - uses: actions/cache/save@v3
         with:
           key: lxc-image-${{ github.sha }}
@@ -107,8 +107,8 @@ jobs:
         script: ["iperf3/iperf3_host", "iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
     steps:
       - uses: actions/checkout@v4.1.1
-      - name: setup lxd (v5.19)
-        run: ./setup_lxd.sh
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v3
         id: cache-restore
         with:
@@ -118,7 +118,7 @@ jobs:
       - name: load lxc image
         run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
       - name: launch lxc container
-        run: ./launch_test_lxc.sh test-export
+        run: ./test/launch_test_lxc.sh test-export
       - name: run benchmark (${{ matrix.script }})
         run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}.sh"
       - name: upload plot
@@ -147,8 +147,8 @@ jobs:
         script: ["iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
     steps:
       - uses: actions/checkout@v4.1.1
-      - name: setup lxd (v5.19)
-        run: ./setup_lxd.sh
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v3
         id: cache-restore
         with:
@@ -158,7 +158,7 @@ jobs:
       - name: load lxc image
         run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
       - name: launch lxc container
-        run: ./launch_test_lxc.sh test-export
+        run: ./test/launch_test_lxc.sh test-export
       - name: run benchmark (${{ matrix.script }})
         run: ./benchmark/${{ matrix.script }}_multinode.sh
       - name: upload plot

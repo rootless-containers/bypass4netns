@@ -8,7 +8,7 @@ BENCH_IMAGE="mysql-bench"
 
 source ~/.profile
 cd $(dirname $0)
-. ../../util.sh
+. ../../test/util.sh
 . ../param.bash
 
 # sometimes fail to pull images

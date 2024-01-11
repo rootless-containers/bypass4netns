@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cd $(dirname $0)
-. ../../util.sh
+. ../../test/util.sh
 
 set +e
 NAME="test" exec_lxc sudo nerdctl rm -f redis-server

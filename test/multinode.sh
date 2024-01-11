@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cd $(dirname $0)
-. ../util.sh
+. ./util.sh
 
 set +e
 NAME="test" exec_lxc nerdctl rm -f vxlan
