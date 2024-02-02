@@ -88,10 +88,14 @@ of `struct sockaddr *` pointers.
     - Currently, bypass4netns bind socket to port `8080` when it handles bind(2) with target port `80`.
     - bind(2) can fail if other process bind port `8080` before container's process bind port `80`
 
-## Talks
+## Publications
 - [Naoki Matsumoto](https://github.com/naoki9911) and [Akihiro Suda](https://github.com/AkihiroSuda).
   Accelerating TCP/IP Communications in Rootless Containers by Socket Switching.
   Presented in [_the 156th meeting of the Special Interest Groups on System Software and Operating System (SIGOS)_](http://www.ipsj.or.jp/sig/os/index.php?2022%C7%AF7%B7%EE%B8%A6%B5%E6%B2%F1),
   SWoPP 2022, Shimonoseki, Japan, July 2022.
     - [Paper (English)](https://pibvt.net/IPSJ-OS22156009.pdf) ([Copyright notice](https://pibvt.net/notice-ipsj.html))
     - [Slides (Japanese)](https://speakerdeck.com/mt2naoki/ip-communications-in-rootless-containers-by-socket-switching)
+- [Naoki Matsumoto](https://github.com/naoki9911) and [Akihiro Suda](https://github.com/AkihiroSuda).
+  bypass4netns: Accelerating TCP/IP Communications in Rootless Containers.
+  [arXiv:2402.00365 [cs.NI]](https://arxiv.org/abs/2402.00365), February 2024.
+    - [Paper](https://arxiv.org/pdf/2402.00365.pdf)
