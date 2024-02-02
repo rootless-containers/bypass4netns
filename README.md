@@ -24,7 +24,7 @@ See also the [talks](#talks).
 
 ## Requirements
 - kernel >= 5.9
-- runc >= 1.1 (crun is currently incompatible due to [crun#1002](https://github.com/containers/crun/issues/1002))
+- runc >= 1.1, or crun >= 1.6
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
 
@@ -59,9 +59,6 @@ $ $DOCKER run -it --rm --security-opt seccomp=$HOME/seccomp.json --runtime=runc 
 ```
 
 `$DOCKER` is either `docker`, `podman`, or `nerdctl`.
-
-NOTE to Podman users:
-crun is currently incompatible due to [crun#1002](https://github.com/containers/crun/issues/1002), and requires removing `sendmsg` from `seccomp.json`.
 
 ### Easy way (nerdctl)
 
