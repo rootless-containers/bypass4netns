@@ -24,7 +24,7 @@ See also the [talks](#talks).
 
 ## Requirements
 - kernel >= 5.9
-- runc >= 1.1 (crun is currently incompatible due to [crun#1002](https://github.com/containers/crun/issues/1002))
+- runc >= 1.1, or crun >= 1.6
 - libseccomp >= 2.5
 - Rootless Docker, Rootless Podman, or Rootless containerd/nerdctl
 
@@ -60,9 +60,6 @@ $ $DOCKER run -it --rm --security-opt seccomp=$HOME/seccomp.json --runtime=runc 
 
 `$DOCKER` is either `docker`, `podman`, or `nerdctl`.
 
-NOTE to Podman users:
-crun is currently incompatible due to [crun#1002](https://github.com/containers/crun/issues/1002), and requires removing `sendmsg` from `seccomp.json`.
-
 ### Easy way (nerdctl)
 
 bypass4netns is experimentally integrated into nerdctl (>= 0.17.0).
@@ -91,10 +88,14 @@ of `struct sockaddr *` pointers.
     - Currently, bypass4netns bind socket to port `8080` when it handles bind(2) with target port `80`.
     - bind(2) can fail if other process bind port `8080` before container's process bind port `80`
 
-## Talks
+## Publications
 - [Naoki Matsumoto](https://github.com/naoki9911) and [Akihiro Suda](https://github.com/AkihiroSuda).
   Accelerating TCP/IP Communications in Rootless Containers by Socket Switching.
   Presented in [_the 156th meeting of the Special Interest Groups on System Software and Operating System (SIGOS)_](http://www.ipsj.or.jp/sig/os/index.php?2022%C7%AF7%B7%EE%B8%A6%B5%E6%B2%F1),
   SWoPP 2022, Shimonoseki, Japan, July 2022.
     - [Paper (English)](https://pibvt.net/IPSJ-OS22156009.pdf) ([Copyright notice](https://pibvt.net/notice-ipsj.html))
     - [Slides (Japanese)](https://speakerdeck.com/mt2naoki/ip-communications-in-rootless-containers-by-socket-switching)
+- [Naoki Matsumoto](https://github.com/naoki9911) and [Akihiro Suda](https://github.com/AkihiroSuda).
+  bypass4netns: Accelerating TCP/IP Communications in Rootless Containers.
+  [arXiv:2402.00365 [cs.NI]](https://arxiv.org/abs/2402.00365), February 2024.
+    - [Paper](https://arxiv.org/pdf/2402.00365.pdf)
