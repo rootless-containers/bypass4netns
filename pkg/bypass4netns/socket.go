@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/sirupsen/logrus"
@@ -179,11 +180,18 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	if handler.multinode.Enable && destAddr.IP.IsPrivate() {
 		// currently, only private addresses are available in multinode communication.
 		key := ETCD_MULTINODE_PREFIX + destAddr.String()
-		res, err := handler.multinode.etcdKeyApi.Get(gocontext.TODO(), ETCD_MULTINODE_PREFIX+destAddr.String(), nil)
+		ctx, cancel := gocontext.WithTimeout(gocontext.Background(), 2*time.Second)
+		res, err := handler.multinode.etcdClient.Get(ctx, ETCD_MULTINODE_PREFIX+destAddr.String())
+		cancel()
 		if err != nil {
 			ss.logger.WithError(err).Warnf("destination address %q is not registered", key)
 		} else {
-			hostAddrWithPort := res.Node.Value
+			if len(res.Kvs) != 1 {
+				ss.logger.Errorf("invalid len(res.Kvs) %d", len(res.Kvs))
+				ss.state = Error
+				return
+			}
+			hostAddrWithPort := string(res.Kvs[0].Value)
 			hostAddrs := strings.Split(hostAddrWithPort, ":")
 			if len(hostAddrs) != 2 {
 				ss.logger.Errorf("invalid address format %q", hostAddrWithPort)

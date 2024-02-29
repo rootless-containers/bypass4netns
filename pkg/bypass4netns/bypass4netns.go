@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/etcd/client"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/oraoto/go-pidfd"
 	"github.com/rootless-containers/bypass4netns/pkg/api/com"
@@ -27,6 +26,7 @@ import (
 	"github.com/rootless-containers/bypass4netns/pkg/util"
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	"github.com/sirupsen/logrus"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/sys/unix"
 )
 
@@ -681,9 +681,8 @@ type MultinodeConfig struct {
 	Enable           bool
 	EtcdAddress      string
 	HostAddress      string
-	etcdClientConfig client.Config
-	etcdClient       client.Client
-	etcdKeyApi       client.KeysAPI
+	etcdClientConfig clientv3.Config
+	etcdClient       *clientv3.Client
 }
 
 type C2CConnectionHandleConfig struct {
@@ -800,16 +799,13 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 		notifHandler.c2cConnections = c2cConfig
 		notifHandler.multinode = multinodeConfig
 		if notifHandler.multinode.Enable {
-			notifHandler.multinode.etcdClientConfig = client.Config{
-				Endpoints:               []string{notifHandler.multinode.EtcdAddress},
-				Transport:               client.DefaultTransport,
-				HeaderTimeoutPerRequest: 2 * time.Second,
+			notifHandler.multinode.etcdClientConfig = clientv3.Config{
+				Endpoints: []string{notifHandler.multinode.EtcdAddress},
 			}
-			notifHandler.multinode.etcdClient, err = client.New(notifHandler.multinode.etcdClientConfig)
+			notifHandler.multinode.etcdClient, err = clientv3.New(notifHandler.multinode.etcdClientConfig)
 			if err != nil {
 				logrus.WithError(err).Fatal("failed to create etcd client")
 			}
-			notifHandler.multinode.etcdKeyApi = client.NewKeysAPI(notifHandler.multinode.etcdClient)
 		}
 
 		// not to run multiple tracerAgent.
@@ -1018,10 +1014,17 @@ func (h *notifHandler) startBackgroundMultinodeTask(ready chan bool) {
 						hostAddr := fmt.Sprintf("%s:%d", h.multinode.HostAddress, v.HostPort)
 						// Remove entries with timeout
 						// TODO: Remove related entries when exiting.
-						opts := &client.SetOptions{
-							TTL: time.Second * 15,
+						ctx, cancel := gocontext.WithTimeout(gocontext.Background(), 2*time.Second)
+						lease, err := h.multinode.etcdClient.Grant(ctx, 15)
+						cancel()
+						if err != nil {
+							logrus.WithError(err).Errorf("failed to grant lease to register %s -> %s", containerAddr, hostAddr)
+							continue
 						}
-						_, err := h.multinode.etcdKeyApi.Set(gocontext.TODO(), ETCD_MULTINODE_PREFIX+containerAddr, hostAddr, opts)
+						ctx, cancel = gocontext.WithTimeout(gocontext.Background(), 2*time.Second)
+						_, err = h.multinode.etcdClient.Put(ctx, ETCD_MULTINODE_PREFIX+containerAddr, hostAddr,
+							clientv3.WithLease(lease.ID))
+						cancel()
 						if err != nil {
 							logrus.WithError(err).Errorf("failed to register %s -> %s", containerAddr, hostAddr)
 						} else {
