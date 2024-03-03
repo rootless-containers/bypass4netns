@@ -7,7 +7,7 @@ require (
 	github.com/opencontainers/runtime-spec v1.0.3-0.20220809190508-9ee22abf867e
 	github.com/oraoto/go-pidfd v0.1.2-0.20210402155345-46bf1ba22e22
 	github.com/seccomp/libseccomp-golang v0.10.0
-	github.com/sirupsen/logrus v1.9.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
 	github.com/vtolstov/go-ioctl v0.0.0-20151206205506-6be9cced4810
