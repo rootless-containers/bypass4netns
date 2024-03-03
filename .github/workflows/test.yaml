@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      - uses: actions/cache/restore@v3
+      - uses: actions/cache/restore@v4
         id: cache-restore
         with:
          key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
@@ -61,7 +61,7 @@ jobs:
         if: steps.s3.conclusion == 'success'
         run: ./test/export_lxc_image.sh test
 
-      - uses: actions/cache/save@v3
+      - uses: actions/cache/save@v4
         id: s5
         if: steps.s4.conclusion == 'success'
         with:
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd
         run: ./test/setup_lxd.sh
-      - uses: actions/cache/restore@v3
+      - uses: actions/cache/restore@v4
         id: cache-restore
         with:
          key: lxc-image-base-${{ hashFiles('go.sum', 'test/init_test.sh') }}
@@ -91,7 +91,7 @@ jobs:
       # some source codes may be updated. re-export new image.
       - name: export image
         run: sudo lxc image alias delete test-export && rm -f /tmp/test-image.tar.zst && ./test/export_lxc_image.sh test
-      - uses: actions/cache/save@v3
+      - uses: actions/cache/save@v4
         with:
           key: lxc-image-${{ github.sha }}
           path: /tmp/test-image.tar.zst
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd
         run: ./test/setup_lxd.sh
-      - uses: actions/cache/restore@v3
+      - uses: actions/cache/restore@v4
         id: cache-restore
         with:
          key: lxc-image-${{ github.sha }}
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v4.1.1
       - name: setup lxd
         run: ./test/setup_lxd.sh
-      - uses: actions/cache/restore@v3
+      - uses: actions/cache/restore@v4
         id: cache-restore
         with:
          key: lxc-image-${{ github.sha }}
