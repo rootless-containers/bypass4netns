@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/oraoto/go-pidfd"
 	"github.com/rootless-containers/bypass4netns/pkg/api/com"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/iproute2"
 	"github.com/rootless-containers/bypass4netns/pkg/bypass4netns/nonbypassable"
@@ -285,7 +284,7 @@ func (h *notifHandler) getPidFdInfo(pid int) (*pidInfo, error) {
 		return &pidfd, nil
 	}
 
-	targetPidfd, err := pidfd.Open(int(pid), 0)
+	targetPidfd, err := unix.PidfdOpen(int(pid), 0)
 	if err == nil {
 		info := pidInfo{
 			pidType: PROCESS,
@@ -324,7 +323,7 @@ func (h *notifHandler) getPidFdInfo(pid int) (*pidInfo, error) {
 	if nextTgid < 0 {
 		logrus.Errorf("cannot get Tgid from /proc/%d/status status=%q", pid, string(st))
 	}
-	targetPidfd, err = pidfd.Open(nextTgid, 0)
+	targetPidfd, err = unix.PidfdOpen(nextTgid, 0)
 	if err != nil {
 		return nil, fmt.Errorf("pidfd Open failed with Tgid: pid=%d %s", nextTgid, err)
 	}
@@ -346,7 +345,7 @@ func (h *notifHandler) getFdInProcess(pid, targetFd int) (int, error) {
 		return 0, fmt.Errorf("pidfd Open failed: %s", err)
 	}
 
-	fd, err := targetPidfd.pidfd.GetFd(targetFd, 0)
+	fd, err := unix.PidfdGetfd(targetPidfd.pidfd, targetFd, 0)
 	if err != nil {
 		return 0, fmt.Errorf("pidfd GetFd failed: %s", err)
 	}
@@ -729,7 +728,7 @@ const (
 
 type pidInfo struct {
 	pidType pidInfoPidType
-	pidfd   pidfd.PidFd
+	pidfd   int
 	tgid    int
 }
 
