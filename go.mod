@@ -3,7 +3,7 @@ module github.com/rootless-containers/bypass4netns
 go 1.19
 
 require (
-	github.com/gorilla/mux v1.8.0
+	github.com/gorilla/mux v1.8.1
 	github.com/opencontainers/runtime-spec v1.0.3-0.20220809190508-9ee22abf867e
 	github.com/oraoto/go-pidfd v0.1.2-0.20210402155345-46bf1ba22e22
 	github.com/seccomp/libseccomp-golang v0.10.0
