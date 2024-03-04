@@ -5,7 +5,6 @@ go 1.19
 require (
 	github.com/gorilla/mux v1.8.1
 	github.com/opencontainers/runtime-spec v1.2.0
-	github.com/oraoto/go-pidfd v0.1.2-0.20210402155345-46bf1ba22e22
 	github.com/seccomp/libseccomp-golang v0.10.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5
