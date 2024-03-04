@@ -1,4 +1,4 @@
-FROM golang:1.21.3 as bench-builder
+FROM golang:1.22.0 as bench-builder
 
 COPY httpserver.go .
 # static link
