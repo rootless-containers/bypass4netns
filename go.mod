@@ -11,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/vtolstov/go-ioctl v0.0.0-20151206205506-6be9cced4810
 	go.etcd.io/etcd/client/v3 v3.5.12
-	golang.org/x/sys v0.17.0
+	golang.org/x/sys v0.18.0
 )
 
 require (
