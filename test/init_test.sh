@@ -52,6 +52,7 @@ echo "===== Prepare ====="
   curl -fsSL https://github.com/containerd/nerdctl/archive/refs/tags/v${NERDCTL_VERSION}.tar.gz | tar Cxz ~/
   cd ~/nerdctl-${NERDCTL_VERSION}
   echo "replace github.com/rootless-containers/bypass4netns => /home/$TEST_USER/bypass4netns" >> go.mod
+  go mod tidy
   make
   sudo rm -f /usr/local/bin/nerdctl
   sudo cp _output/nerdctl /usr/local/bin/nerdctl
