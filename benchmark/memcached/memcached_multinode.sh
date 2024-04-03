@@ -68,8 +68,8 @@ echo "===== Benchmark: memcached client(w/ bypass4netns) server(w/ bypass4netns)
   NAME="test" exec_lxc systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$TEST_ADDR:2379 --advertise-client-urls http://$TEST_ADDR:2379
   NAME="test" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST_ADDR
   NAME="test2" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST2_ADDR
-  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -p 11212:11211 --name memcached-server -d $MEMCACHED_IMAGE"
-  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true --name memcached-client -d --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c 'sleep infinity'"
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -p 11212:11211 --name memcached-server -d $MEMCACHED_IMAGE"
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true --name memcached-client -d --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c 'sleep infinity'"
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec memcached-server hostname -i)
   sleep 5
   LOG_NAME="memcached-multinode-w-b4ns.log"

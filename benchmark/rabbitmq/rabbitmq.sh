@@ -85,10 +85,10 @@ echo "===== Benchmark: rabbitmq client(w/ bypass4netns) server(w/ bypass4netns) 
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name rabbitmq-server -p 5673:5672 $RABBITMQ_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name rabbitmq-server -p 5673:5672 $RABBITMQ_IMAGE
   sleep 10
   LOG_NAME="rabbitmq-w-b4ns.log"
-  nerdctl run --label nerdctl/bypass4netns=true --name rabbitmq-client --rm $PERF_IMAGE --uri amqp://$HOST_IP:5673 --producers 2 --consumers 2 --time 60 > $LOG_NAME
+  nerdctl run --annotation nerdctl/bypass4netns=true --name rabbitmq-client --rm $PERF_IMAGE --uri amqp://$HOST_IP:5673 --producers 2 --consumers 2 --time 60 > $LOG_NAME
 
   nerdctl rm -f rabbitmq-server
   systemctl --user stop run-bypass4netnsd
@@ -107,10 +107,10 @@ echo "===== Benchmark: rabbitmq client(w/ bypass4netns) server(w/ bypass4netns) 
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name rabbitmq-server -p 5673:5672 $RABBITMQ_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name rabbitmq-server -p 5673:5672 $RABBITMQ_IMAGE
   sleep 10
   SERVER_IP=$(nerdctl exec rabbitmq-server hostname -i)
-  nerdctl run --label nerdctl/bypass4netns=true --name rabbitmq-client --rm $PERF_IMAGE --uri amqp://$SERVER_IP --producers 2 --consumers 2 --time 60
+  nerdctl run --annotation nerdctl/bypass4netns=true --name rabbitmq-client --rm $PERF_IMAGE --uri amqp://$SERVER_IP --producers 2 --consumers 2 --time 60
 
   nerdctl rm -f rabbitmq-server
   systemctl --user stop run-bypass4netnsd

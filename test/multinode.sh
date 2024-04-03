@@ -45,11 +45,11 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
   NAME="test" exec_lxc systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$TEST_ADDR:2379 --advertise-client-urls http://$TEST_ADDR:2379
   NAME="test" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST_ADDR
   NAME="test2" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST2_ADDR
-  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d -p 8080:5201 --name vxlan $ALPINE_IMAGE sleep infinity"
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -d -p 8080:5201 --name vxlan $ALPINE_IMAGE sleep infinity"
   NAME="test" exec_lxc nerdctl exec vxlan apk add --no-cache iperf3
   NAME="test" exec_lxc systemd-run --user --unit run-test-iperf3 nerdctl exec vxlan iperf3 -s
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec vxlan hostname -i)
-  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d --name vxlan $ALPINE_IMAGE sleep infinity"
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -d --name vxlan $ALPINE_IMAGE sleep infinity"
   NAME="test2" exec_lxc nerdctl exec vxlan apk add --no-cache iperf3
   NAME="test2" exec_lxc nerdctl exec vxlan iperf3 -c $SERVER_IP
 
