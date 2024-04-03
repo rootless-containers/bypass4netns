@@ -77,10 +77,10 @@ echo "===== Benchmark: etcd client(w/ bypass4netns) server(w/ bypass4netns) with
   NAME="test" exec_lxc systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$TEST_ADDR:2379 --advertise-client-urls http://$TEST_ADDR:2379
   NAME="test" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST_ADDR
   NAME="test2" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST2_ADDR
-  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -p 12379:2379 --name etcd-server -d $ETCD_IMAGE /bin/sh -c 'sleep infinity'"
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -p 12379:2379 --name etcd-server -d $ETCD_IMAGE /bin/sh -c 'sleep infinity'"
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec etcd-server hostname -i)
   NAME="test" exec_lxc systemd-run --user --unit etcd-server nerdctl exec etcd-server /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://$SERVER_IP:2379
-  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true --name etcd-client -d $BENCH_IMAGE /bin/sh -c 'sleep infinity'"
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true --name etcd-client -d $BENCH_IMAGE /bin/sh -c 'sleep infinity'"
   sleep 5
   LOG_NAME="etcd-multinode-w-b4ns.log"
   NAME="test2" exec_lxc nerdctl exec etcd-client /bench put --key-size=8 --val-size=256 --conns=10 --clients=10 --total=100000 --endpoints $SERVER_IP:2379 > $LOG_NAME

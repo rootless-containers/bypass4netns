@@ -112,10 +112,10 @@ echo "===== Benchmark: etcd client(w/ bypass4netns) server(w/ bypass4netns) via 
   set -ex
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name etcd-server -p 12379:2379 $ETCD_IMAGE /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://$HOST_IP:2379
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name etcd-server -p 12379:2379 $ETCD_IMAGE /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://$HOST_IP:2379
   sleep 5
   LOG_NAME="etcd-w-b4ns.log"
-  nerdctl run --label nerdctl/bypass4netns=true --rm $BENCH_IMAGE /bench put --key-size=8 --val-size=256 --conns=10 --clients=10 --total=100000 --endpoints $HOST_IP:12379 > $LOG_NAME
+  nerdctl run --annotation nerdctl/bypass4netns=true --rm $BENCH_IMAGE /bench put --key-size=8 --val-size=256 --conns=10 --clients=10 --total=100000 --endpoints $HOST_IP:12379 > $LOG_NAME
 
   nerdctl rm -f etcd-server
   nerdctl rm -f etcd-client
@@ -136,11 +136,11 @@ echo "===== Benchmark: etcd client(w/ bypass4netns) server(w/ bypass4netns) with
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name etcd-server -p 12379:2379 $ETCD_IMAGE /bin/sh -c "sleep infinity"
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name etcd-server -p 12379:2379 $ETCD_IMAGE /bin/sh -c "sleep infinity"
   sleep 5
   SERVER_IP=$(nerdctl exec etcd-server hostname -i)
   systemd-run --user --unit etcd-server nerdctl exec etcd-server /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://$SERVER_IP:2379
-  nerdctl run --label nerdctl/bypass4netns=true --rm $BENCH_IMAGE /bench put --key-size=8 --val-size=256 --conns=10 --clients=10 --total=100000 --endpoints $SERVER_IP:2379
+  nerdctl run --annotation nerdctl/bypass4netns=true --rm $BENCH_IMAGE /bench put --key-size=8 --val-size=256 --conns=10 --clients=10 --total=100000 --endpoints $SERVER_IP:2379
 
   nerdctl rm -f etcd-server
   nerdctl rm -f etcd-client

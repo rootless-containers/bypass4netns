@@ -96,9 +96,9 @@ echo "===== Benchmark: memcached client(w/ bypass4netns) server(w/ bypass4netns)
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name memcached-server -p 11212:11211 $MEMCACHED_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name memcached-server -p 11212:11211 $MEMCACHED_IMAGE
   LOG_NAME="memcached-w-b4ns.log"
-  nerdctl run --label nerdctl/bypass4netns=true -d --name memcached-client --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c "sleep infinity"
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name memcached-client --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c "sleep infinity"
   nerdctl exec memcached-client memtier_benchmark --host=$HOST_IP --port=11212 --protocol=memcache_binary --json-out-file=/$LOG_NAME > /dev/null
   nerdctl cp memcached-client:/$LOG_NAME ./$LOG_NAME
 
@@ -122,9 +122,9 @@ echo "===== Benchmark: memcached client(w/ bypass4netns) server(w/ bypass4netns)
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name memcached-server -p 11212:11211 $MEMCACHED_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name memcached-server -p 11212:11211 $MEMCACHED_IMAGE
   SERVER_IP=$(nerdctl exec memcached-server hostname -i)
-  nerdctl run --label nerdctl/bypass4netns=true -d --name memcached-client --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c "sleep infinity"
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name memcached-client --entrypoint '' $MEMTIRE_IMAGE /bin/sh -c "sleep infinity"
   nerdctl exec memcached-client memtier_benchmark --host=$SERVER_IP --port=11211 --protocol=memcache_binary
 
   nerdctl rm -f memcached-server

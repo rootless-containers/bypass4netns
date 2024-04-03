@@ -13,7 +13,7 @@ if [ "$(whoami)" != "$TEST_USER" ]; then
 fi
 
 GO_VERSION="1.22.0"
-NERDCTL_VERSION="2.0.0-beta.1"
+NERDCTL_VERSION="2.0.0-beta.3"
 
 echo "===== Prepare ====="
 (

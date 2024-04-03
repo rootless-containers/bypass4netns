@@ -125,9 +125,9 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) vi
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
   nerdctl exec iperf3-server apk add --no-cache iperf3
-  nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-client $ALPINE_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name iperf3-client $ALPINE_IMAGE sleep infinity
   nerdctl exec iperf3-client apk add --no-cache iperf3
 
   systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s
@@ -156,9 +156,9 @@ echo "===== Benchmark: iperf3 client(w/ bypass4netns) server(w/ bypass4netns) wi
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name iperf3-server -p 5202:5201 $ALPINE_IMAGE sleep infinity
   nerdctl exec iperf3-server apk add --no-cache iperf3
-  nerdctl run --label nerdctl/bypass4netns=true -d --name iperf3-client $ALPINE_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name iperf3-client $ALPINE_IMAGE sleep infinity
   nerdctl exec iperf3-client apk add --no-cache iperf3
 
   systemd-run --user --unit iperf3-server nerdctl exec iperf3-server iperf3 -s

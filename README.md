@@ -66,10 +66,11 @@ bypass4netns is experimentally integrated into nerdctl (>= 0.17.0).
 
 ```bash
 containerd-rootless-setuptool.sh install-bypass4netnsd
-nerdctl run -it --rm -p 8080:80 --label nerdctl/bypass4netns=true alpine
+nerdctl run -it --rm -p 8080:80 --annotation nerdctl/bypass4netns=true alpine
 ```
 
-NOTE: `--label nerdctl/bypass4netns=true` will be probably replaced with `--security-opt` or something like `--network-opt` in a future version of nerdctl.
+NOTE: nerdctl prior to v2.0 needs `--label` instead of `--annotation`.
+Also, the syntax will be probably replaced with `--security-opt` or something like `--network-opt` in a future version of nerdctl.
 
 ## :warning: Caveats :warning:
 Accesses to host abstract sockets and host loopback IPs (127.0.0.0/8) from containers are designed to be rejected.

@@ -95,8 +95,8 @@ echo "===== Benchmark: postgresql client(w/ bypass4netns) server(w/ bypass4netns
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
   PID=$(nerdctl inspect psql-client | jq '.[0].State.Pid')
   NAME="psql-client" exec_netns /bin/bash -c "until nc -z $HOST_IP 15432; do sleep 1; done"
   nerdctl exec psql-client pgbench -h $HOST_IP -p 15432 -U postgres -s 10 -i postgres
@@ -120,8 +120,8 @@ echo "===== Benchmark: postgres client(w/ bypass4netns) server(w/ bypass4netns) 
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 15432:5432 --name psql-server -e POSTGRES_PASSWORD=pass $POSTGRES_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name psql-client -e PGPASSWORD=pass $POSTGRES_IMAGE sleep infinity
   SERVER_IP=$(nerdctl exec psql-server hostname -i)
   sleep 5
   nerdctl exec psql-client pgbench -h $SERVER_IP -p 5432 -U postgres -s 10 -i postgres

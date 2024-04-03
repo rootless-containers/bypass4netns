@@ -23,7 +23,7 @@ echo "===== Benchmark: netns -> host With bypass4netns ====="
   # start bypass4netnsd for nerdctl integration
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd
   sleep 1
-  nerdctl run --label nerdctl/bypass4netns=true -d --name test "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name test "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test apk add --no-cache iperf3
   nerdctl exec test iperf3 -c $HOST_IP
   nerdctl rm -f test
@@ -49,7 +49,7 @@ echo "===== Benchmark: host -> netns With bypass4netns ====="
   systemctl --user reset-failed
   set -ex
 
-  nerdctl run --label nerdctl/bypass4netns=true -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name test -p 8080:5201 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test apk add --no-cache iperf3
   systemd-run --user --unit run-iperf3-netns nerdctl exec test iperf3 -s -4
   sleep 1 # waiting `iperf3 -s -4` becomes ready

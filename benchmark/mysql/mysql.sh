@@ -107,8 +107,8 @@ echo "===== Benchmark: mysql client(w/ bypass4netns) server(w/ bypass4netns) via
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity
   sleep 30
   nerdctl exec mysql-client sysbench --threads=4 --time=60 --mysql-host=$HOST_IP --mysql-port=13306 --mysql-db=bench --mysql-user=root --mysql-password=pass --db-driver=mysql oltp_common prepare
   nerdctl exec mysql-client sysbench --threads=4 --time=60 --mysql-host=$HOST_IP --mysql-port=13306 --mysql-db=bench --mysql-user=root --mysql-password=pass --db-driver=mysql oltp_read_write run > mysql-w-b4ns.log
@@ -131,8 +131,8 @@ echo "===== Benchmark: mysql client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity
   SERVER_IP=$(nerdctl inspect mysql-server | jq -r .[0].NetworkSettings.Networks.'"unknown-eth0"'.IPAddress)
   sleep 30
   nerdctl exec mysql-client sysbench --threads=4 --time=60 --mysql-host=$SERVER_IP --mysql-port=3306 --mysql-db=bench --mysql-user=root --mysql-password=pass --db-driver=mysql oltp_common prepare

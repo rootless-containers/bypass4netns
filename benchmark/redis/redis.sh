@@ -89,8 +89,8 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) via
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd 
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   nerdctl exec redis-client redis-benchmark -q -h $HOST_IP -p 6380 --csv > redis-w-b4ns.log
   cat redis-w-b4ns.log
 
@@ -112,8 +112,8 @@ echo "===== Benchmark: redis client(w/ bypass4netns) server(w/ bypass4netns) wit
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$HOST_IP:2379 --advertise-client-urls http://$HOST_IP:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP
 
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
-  nerdctl run --label nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 6380:6379 --name redis-server $REDIS_IMAGE
+  nerdctl run --annotation nerdctl/bypass4netns=true -d --name redis-client $REDIS_IMAGE sleep infinity
   SERVER_IP=$(nerdctl exec redis-server hostname -i)
   # without 'sleep 1', benchmark is not performed.(race condition?)
   nerdctl exec redis-client /bin/sh -c "sleep 1 && redis-benchmark -q -h $SERVER_IP -p 6379 --csv" 

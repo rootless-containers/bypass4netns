@@ -75,8 +75,8 @@ echo "===== Benchmark: mysql client(w/ bypass4netns) server(w/ bypass4netns) wit
   NAME="test" exec_lxc systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$TEST_ADDR:2379 --advertise-client-urls http://$TEST_ADDR:2379
   NAME="test" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST_ADDR
   NAME="test2" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST2_ADDR
-  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE"
-  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity"
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -d -p 13306:3306 --name mysql-server -e MYSQL_ROOT_PASSWORD=pass -e MYSQL_DATABASE=bench $MYSQL_IMAGE"
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -d --name mysql-client $BENCH_IMAGE sleep infinity"
   SERVER_IP=$(NAME="test" exec_lxc nerdctl inspect mysql-server | jq -r .[0].NetworkSettings.Networks.'"unknown-eth0"'.IPAddress)
   sleep 30
   NAME="test2" exec_lxc nerdctl exec mysql-client sysbench --threads=4 --time=60 --mysql-host=$SERVER_IP --mysql-db=bench --mysql-user=root --mysql-password=pass --db-driver=mysql oltp_common prepare

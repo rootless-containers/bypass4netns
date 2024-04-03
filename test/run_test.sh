@@ -132,12 +132,12 @@ echo "===== tracer test (disabled) ====="
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --handle-c2c-connections=true
   sleep 1
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test1 apk add --no-cache iperf3
   TEST1_ADDR=$(nerdctl exec test1 hostname -i)
   systemd-run --user --unit run-test1-iperf3 nerdctl exec test1 iperf3 -s
   nerdctl network create --subnet "10.4.1.0/24" net-2
-  nerdctl run --net net-2 --label nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --net net-2 --annotation nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test2 apk add --no-cache iperf3
   nerdctl exec test2 iperf3 -c $TEST1_ADDR -t 1 --connect-timeout 1000 # it must success to connect.
 
@@ -159,12 +159,12 @@ echo "===== tracer test (enabled) ====="
 
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --handle-c2c-connections=true --tracer=true --debug
   sleep 1
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test1 apk add --no-cache iperf3
   TEST1_ADDR=$(nerdctl exec test1 hostname -i)
   systemd-run --user --unit run-test1-iperf3 nerdctl exec test1 iperf3 -s
   nerdctl network create --subnet "10.4.1.0/24" net-2
-  nerdctl run --net net-2 --label nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --net net-2 --annotation nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test2 apk add --no-cache iperf3
   set +e
   nerdctl exec test2 iperf3 -c $TEST1_ADDR -t 1 --connect-timeout 1000 # it must not success to connect.
@@ -195,12 +195,12 @@ echo "===== multinode test (single node) ===="
   systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://${HOST_IP}:2379 --advertise-client-urls http://${HOST_IP}:2379
   systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$HOST_IP:2379 --multinode-host-address=$HOST_IP --debug
   sleep 1
-  nerdctl run --label nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --annotation nerdctl/bypass4netns=true -d -p 8080:5201 --name test1 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test1 apk add --no-cache iperf3
   TEST1_ADDR=$(nerdctl exec test1 hostname -i)
   systemd-run --user --unit run-test1-iperf3 nerdctl exec test1 iperf3 -s
   nerdctl network create --subnet "10.4.1.0/24" net-2
-  nerdctl run --net net-2 --label nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
+  nerdctl run --net net-2 --annotation nerdctl/bypass4netns=true -d --name test2 "${ALPINE_IMAGE}" sleep infinity
   nerdctl exec test2 apk add --no-cache iperf3
   nerdctl exec test2 iperf3 -c $TEST1_ADDR -t 1 --connect-timeout 1000 # it must success to connect.
 

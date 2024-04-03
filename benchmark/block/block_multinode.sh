@@ -77,9 +77,9 @@ echo "===== Benchmark: block client(w/ bypass4netns) server(w/ bypass4netns) wit
   NAME="test" exec_lxc systemd-run --user --unit etcd.service /usr/bin/etcd --listen-client-urls http://$TEST_ADDR:2379 --advertise-client-urls http://$TEST_ADDR:2379
   NAME="test" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST_ADDR
   NAME="test2" exec_lxc systemd-run --user --unit run-bypass4netnsd bypass4netnsd --multinode=true --multinode-etcd-address=http://$TEST_ADDR:2379 --multinode-host-address=$TEST2_ADDR
-  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -p 8080:80 -d --name block-server -v /home/ubuntu/bypass4netns/benchmark/block:/var/www/html:ro $IMAGE_NAME nginx -g \"daemon off;\""
+  NAME="test" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -p 8080:80 -d --name block-server -v /home/ubuntu/bypass4netns/benchmark/block:/var/www/html:ro $IMAGE_NAME nginx -g \"daemon off;\""
   SERVER_IP=$(NAME="test" exec_lxc nerdctl exec block-server hostname -i)
-  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --label nerdctl/bypass4netns=true -d --name block-client $IMAGE_NAME sleep infinity"
+  NAME="test2" exec_lxc /bin/bash -c "sleep 3 && nerdctl run --annotation nerdctl/bypass4netns=true -d --name block-client $IMAGE_NAME sleep infinity"
   LOG_NAME="block-multinode-w-b4ns.log"
   rm -f $LOG_NAME
   for BLOCK_SIZE in ${BLOCK_SIZES[@]}
