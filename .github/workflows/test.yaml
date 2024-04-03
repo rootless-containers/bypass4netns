@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
         with:
           fetch-depth: 1
       - uses: actions/setup-go@v5
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
 
       - uses: actions/cache/restore@v4
         id: cache-restore
@@ -73,7 +73,7 @@ jobs:
     needs: create-lxc-image
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
       - name: setup lxd
         run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v4
@@ -106,7 +106,7 @@ jobs:
       matrix:
         script: ["iperf3/iperf3_host", "iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
       - name: setup lxd
         run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v4
@@ -146,7 +146,7 @@ jobs:
       matrix:
         script: ["iperf3/iperf3", "postgres/postgres", "redis/redis", "block/block", "memcached/memcached", "rabbitmq/rabbitmq", "etcd/etcd", "mysql/mysql"]
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
       - name: setup lxd
         run: ./test/setup_lxd.sh
       - uses: actions/cache/restore@v4
@@ -176,7 +176,7 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [benchmark, benchmark-multinode]
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
       - run: sudo apt update && sudo apt install python3 python3-pip
       - run: pip3 install matplotlib numpy
       - uses: actions/download-artifact@v3
@@ -208,7 +208,7 @@ jobs:
   bench-script:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.1.2
       - run: sudo ip a add 192.168.6.2/32 dev eth0
       - run: hostname -I
       - run: ./test/init_test.sh
