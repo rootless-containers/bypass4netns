@@ -81,10 +81,11 @@ type socketStatus struct {
 	socketOptions []socketOption
 	fcntlOptions  []fcntlOption
 
-	logger *logrus.Entry
+	logger     *logrus.Entry
+	ignoreBind bool
 }
 
-func newSocketStatus(pid int, sockfd int, sockDomain, sockType, sockProto int) *socketStatus {
+func newSocketStatus(pid int, sockfd int, sockDomain, sockType, sockProto int, ignoreBind bool) *socketStatus {
 	return &socketStatus{
 		state:         NotBypassed,
 		pid:           pid,
@@ -95,6 +96,7 @@ func newSocketStatus(pid int, sockfd int, sockDomain, sockType, sockProto int) *
 		socketOptions: []socketOption{},
 		fcntlOptions:  []fcntlOption{},
 		logger:        logrus.WithFields(logrus.Fields{"pid": pid, "sockfd": sockfd}),
+		ignoreBind:    ignoreBind,
 	}
 }
 
@@ -166,14 +168,18 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	connectToLoopback := false
 	connectToInterface := false
 	connectToOtherBypassedContainer := false
-	fwdPort, ok := handler.forwardingPorts[int(destAddr.Port)]
-	if ok {
-		if destAddr.IP.IsLoopback() {
-			ss.logger.Infof("destination address %v is loopback and bypassed", destAddr)
-			connectToLoopback = true
-		} else if contIf, ok := handler.containerInterfaces[destAddr.String()]; ok && contIf.containerID == handler.state.State.ID {
-			ss.logger.Infof("destination address %v is interface's address and bypassed", destAddr)
-			connectToInterface = true
+	var fwdPort ForwardPortMapping
+	if !ss.ignoreBind {
+		var ok bool
+		fwdPort, ok = handler.forwardingPorts[int(destAddr.Port)]
+		if ok {
+			if destAddr.IP.IsLoopback() {
+				ss.logger.Infof("destination address %v is loopback and bypassed", destAddr)
+				connectToLoopback = true
+			} else if contIf, ok := handler.containerInterfaces[destAddr.String()]; ok && contIf.containerID == handler.state.State.ID {
+				ss.logger.Infof("destination address %v is interface's address and bypassed", destAddr)
+				connectToInterface = true
+			}
 		}
 	}
 
@@ -301,6 +307,10 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 }
 
 func (ss *socketStatus) handleSysBind(pid int, handler *notifHandler, ctx *context) {
+	if ss.ignoreBind {
+		ss.state = NotBypassable
+		return
+	}
 	sa, err := handler.readSockaddrFromProcess(pid, ctx.req.Data.Args[1], ctx.req.Data.Args[2])
 	if err != nil {
 		ss.logger.Errorf("failed to read sockaddr from process: %q", err)
