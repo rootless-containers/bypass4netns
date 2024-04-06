@@ -417,7 +417,19 @@ func (h *notifHandler) registerSocket(pid int, sockfd int, syscallName string) (
 		sock.state = NotBypassable
 		logger.Debugf("failed to get socket args err=%q", err)
 	} else {
-		if sockDomain != syscall.AF_INET && sockDomain != syscall.AF_INET6 {
+		// compare process's netns is same or not with container init process's netns
+		isSameNetNS, err := util.SameNetNS(h.containerInitPid, pid)
+		if err != nil {
+			logger.Errorf("failed to check NetNS: err=%q", err)
+			sock.state = NotBypassable
+		}
+
+		// check the process is executed with container's netns.
+		// processes with nested netns are not handled by bypass4netns
+		if !isSameNetNS {
+			logger.Infof("process seems to be executed in other netns. socket is NotBypassable and ignored")
+			sock.state = NotBypassable
+		} else if sockDomain != syscall.AF_INET && sockDomain != syscall.AF_INET6 {
 			// non IP sockets are not handled.
 			sock.state = NotBypassable
 			logger.Debugf("socket domain=0x%x", sockDomain)
@@ -629,6 +641,8 @@ type Handler struct {
 
 	// key is child port
 	forwardingPorts map[int]ForwardPortMapping
+
+	ContainerInitPid int
 }
 
 // NewHandler creates new seccomp notif handler
@@ -640,6 +654,7 @@ func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string) *Handler {
 		ignoredSubnets:     []net.IPNet{},
 		forwardingPorts:    map[int]ForwardPortMapping{},
 		readyFd:            -1,
+		ContainerInitPid:   -1,
 	}
 
 	return &handler
@@ -711,6 +726,10 @@ type notifHandler struct {
 
 	// cache pidfd to reduce latency. key is pid.
 	pidInfos map[int]pidInfo
+
+	// container init process's pid
+	// used to check whether netns is container or not.
+	containerInitPid int
 }
 
 type containerInterface struct {
@@ -732,14 +751,15 @@ type pidInfo struct {
 	tgid    int
 }
 
-func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState) *notifHandler {
+func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState, containerInitPid int) *notifHandler {
 	notifHandler := notifHandler{
-		fd:              libseccomp.ScmpFd(fd),
-		state:           state,
-		forwardingPorts: map[int]ForwardPortMapping{},
-		processes:       map[int]*processStatus{},
-		memfds:          map[int]int{},
-		pidInfos:        map[int]pidInfo{},
+		fd:               libseccomp.ScmpFd(fd),
+		state:            state,
+		forwardingPorts:  map[int]ForwardPortMapping{},
+		processes:        map[int]*processStatus{},
+		memfds:           map[int]int{},
+		pidInfos:         map[int]pidInfo{},
+		containerInitPid: containerInitPid,
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate
@@ -793,8 +813,17 @@ func (h *Handler) StartHandle(c2cConfig *C2CConnectionHandleConfig, multinodeCon
 			continue
 		}
 
+		// state.Pid can be the process in nested netns when executed with 'ip netns exec'.
+		// so, we cannot distinguish container netns and nested netns with simply comparing state.Pid and hooked process's pid
+		// Instead of state.Pid, init process's pid should be used.
+		// bypass4netns recognizes the first process as a init process.
+		if h.ContainerInitPid < 0 {
+			h.ContainerInitPid = state.Pid
+			logrus.Infof("ContainerInitPid is %d", h.ContainerInitPid)
+		}
+
 		logrus.Infof("Received new seccomp fd: %v", newFd)
-		notifHandler := h.newNotifHandler(newFd, state)
+		notifHandler := h.newNotifHandler(newFd, state, h.ContainerInitPid)
 		notifHandler.c2cConnections = c2cConfig
 		notifHandler.multinode = multinodeConfig
 		if notifHandler.multinode.Enable {

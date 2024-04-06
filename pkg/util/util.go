@@ -20,8 +20,16 @@ func ShrinkID(id string) string {
 }
 
 func SameUserNS(pidX, pidY int) (bool, error) {
-	nsX := fmt.Sprintf("/proc/%d/ns/user", pidX)
-	nsY := fmt.Sprintf("/proc/%d/ns/user", pidY)
+	return sameNS(pidX, pidY, "user")
+}
+
+func SameNetNS(pidX, pidY int) (bool, error) {
+	return sameNS(pidX, pidY, "net")
+}
+
+func sameNS(pidX, pidY int, nsName string) (bool, error) {
+	nsX := fmt.Sprintf("/proc/%d/ns/%s", pidX, nsName)
+	nsY := fmt.Sprintf("/proc/%d/ns/%s", pidY, nsName)
 	nsXResolved, err := os.Readlink(nsX)
 	if err != nil {
 		return false, err
