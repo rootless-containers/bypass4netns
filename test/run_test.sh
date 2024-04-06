@@ -211,3 +211,47 @@ echo "===== multinode test (single node) ===="
   systemctl --user stop etcd.service
   systemctl --user reset-failed
 )
+
+echo "===== nested netns test ===="
+(
+  CONTAINER_NAME="test-nested"
+  set +e
+  nerdctl rm -f $CONTAINER_NAME
+  systemctl --user stop run-iperf3
+  systemctl --user stop run-bypass4netnsd
+  systemctl --user reset-failed
+  set -ex
+
+
+  IMAGE_NAME="b4ns:nested"
+  nerdctl build -f ./DockerfileNestedNetNS -t $IMAGE_NAME .
+
+  systemd-run --user --unit run-bypass4netnsd bypass4netnsd
+  sleep 1
+  nerdctl run --privileged --annotation nerdctl/bypass4netns=true -d -p 5202:5201 --name $CONTAINER_NAME $IMAGE_NAME sleep infinity
+
+  # with container's netns
+  systemd-run --user --unit run-iperf3 nerdctl exec $CONTAINER_NAME iperf3 -s
+  sleep 1
+  iperf3 -c localhost -t 1 -p 5202 --connect-timeout 1000 # it must success to connect.
+  systemctl --user stop run-iperf3
+  systemctl --user reset-failed
+
+  # with nested netns
+  nerdctl exec $CONTAINER_NAME mkdir /sys2
+  nerdctl exec $CONTAINER_NAME mount -t sysfs --make-private /sys2
+  nerdctl exec $CONTAINER_NAME ip netns add nested
+  systemd-run --user --unit run-iperf3 nerdctl exec $CONTAINER_NAME ip netns exec nested iperf3 -s
+  sleep 1
+  set +e
+  iperf3 -c localhost -t 1 -p 5202 --connect-timeout 1000 # it must fail
+  if [ $? -eq 0 ]; then
+    echo "iperf3 must not success to connect."
+    exit 1
+  fi
+  set -e
+  systemctl --user stop run-iperf3
+
+  nerdctl rm -f test-nested
+  systemctl --user reset-failed
+)
