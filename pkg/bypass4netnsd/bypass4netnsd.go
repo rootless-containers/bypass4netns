@@ -87,6 +87,10 @@ func (d *Driver) StartBypass(spec *api.BypassSpec) (*api.BypassStatus, error) {
 		b4nnArgs = append(b4nnArgs, fmt.Sprintf("--ignore=%s", subnet))
 	}
 
+	if spec.IgnoreBind {
+		b4nnArgs = append(b4nnArgs, "--ignore-bind")
+	}
+
 	b4nnArgs = append(b4nnArgs, fmt.Sprintf("--com-socket=%s", d.ComSocketPath))
 	if d.HandleC2CEnable {
 		b4nnArgs = append(b4nnArgs, "--handle-c2c-connections")

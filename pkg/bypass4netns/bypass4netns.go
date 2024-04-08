@@ -411,7 +411,7 @@ func (h *notifHandler) registerSocket(pid int, sockfd int, syscallName string) (
 	defer syscall.Close(sockFdHost)
 
 	sockDomain, sockType, sockProtocol, err := getSocketArgs(sockFdHost)
-	sock = newSocketStatus(pid, sockfd, sockDomain, sockType, sockProtocol)
+	sock = newSocketStatus(pid, sockfd, sockDomain, sockType, sockProtocol, h.ignoreBind)
 	if err != nil {
 		// non-socket fd is not bypassable
 		sock.state = NotBypassable
@@ -629,10 +629,12 @@ type Handler struct {
 
 	// key is child port
 	forwardingPorts map[int]ForwardPortMapping
+
+	ignoreBind bool
 }
 
 // NewHandler creates new seccomp notif handler
-func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string) *Handler {
+func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string, ignoreBind bool) *Handler {
 	handler := Handler{
 		socketPath:         socketPath,
 		comSocketPath:      comSocketPath,
@@ -640,6 +642,7 @@ func NewHandler(socketPath, comSocketPath, tracerAgentLogPath string) *Handler {
 		ignoredSubnets:     []net.IPNet{},
 		forwardingPorts:    map[int]ForwardPortMapping{},
 		readyFd:            -1,
+		ignoreBind:         ignoreBind,
 	}
 
 	return &handler
@@ -711,6 +714,8 @@ type notifHandler struct {
 
 	// cache pidfd to reduce latency. key is pid.
 	pidInfos map[int]pidInfo
+
+	ignoreBind bool
 }
 
 type containerInterface struct {
@@ -740,6 +745,7 @@ func (h *Handler) newNotifHandler(fd uintptr, state *specs.ContainerProcessState
 		processes:       map[int]*processStatus{},
 		memfds:          map[int]int{},
 		pidInfos:        map[int]pidInfo{},
+		ignoreBind:      h.ignoreBind,
 	}
 	notifHandler.nonBypassable = nonbypassable.New(h.ignoredSubnets)
 	notifHandler.nonBypassableAutoUpdate = h.ignoredSubnetsAutoUpdate

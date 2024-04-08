@@ -13,6 +13,7 @@ type BypassSpec struct {
 	LogFilePath   string     `json:"logFilePath"`
 	PortMapping   []PortSpec `json:"portMapping"`
 	IgnoreSubnets []string   `json:"ignoreSubnets"` // CIDR or "auto"
+	IgnoreBind    bool       `json:"ignoreBind"`
 }
 
 type PortSpec struct {

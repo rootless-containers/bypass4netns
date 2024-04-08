@@ -59,6 +59,7 @@ func main() {
 	handleC2cEnable := flag.Bool("handle-c2c-connections", false, "Handle connections between containers")
 	tracerEnable := flag.Bool("tracer", false, "Enable connection tracer")
 	multinodeEnable := flag.Bool("multinode", false, "Enable multinode communication")
+	ignoreBind := flag.Bool("ignore-bind", false, "Disable bypassing bind")
 
 	// Parse arguments
 	flag.Parse()
@@ -154,7 +155,7 @@ func main() {
 
 	logrus.Infof("SocketPath: %s", socketFile)
 
-	handler := bypass4netns.NewHandler(socketFile, comSocketFile, strings.Replace(logFilePath, ".log", "-tracer.log", -1))
+	handler := bypass4netns.NewHandler(socketFile, comSocketFile, strings.Replace(logFilePath, ".log", "-tracer.log", -1), *ignoreBind)
 
 	subnets := []net.IPNet{}
 	var subnetsAuto bool
