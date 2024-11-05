@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -ux -o pipefail
-IMAGE=${1:-"images:ubuntu/22.04"}
+IMAGE=${1:-"ubuntu:22.04"}
 
 cd $(dirname $0)
 
