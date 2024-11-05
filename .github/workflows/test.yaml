@@ -209,10 +209,81 @@ jobs:
 
   bench-script:
     runs-on: ubuntu-22.04
+    needs: test
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4.1.3
-      - run: sudo ip a add 192.168.6.2/32 dev eth0
-      - run: hostname -I
-      - run: ./test/init_test.sh
-      - run: ~/bypass4netns/benchmark/run_bench.sh
+        # thanks to https://github.com/NobuoTsukamoto/my_actions_test/blob/main/.github/workflows/test_contains.yml
+      - name: cleanup
+        run: |
+          sudo rm -rf "/opt/*" || true
+          sudo rm -rf "/usr/share/dotnet" || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          sudo rm -rf "/usr/local/lib/android" || true
+          sudo rm -rf "/usr/local/share/boost" || true
+          sudo rm -rf "/usr/lib/jvm" || true
+          sudo rm -rf "/usr/share/swift" || true
+          sudo rm -rf "/usr/local/julia*" || true
+          sudo rm -rf "/usr/share/kotlinc" || true
+          sudo rm -rf "/usr/local/share/edge_driver" || true
+          sudo rm -rf "/usr/local/share/chromedriver-linux64" || true
+          sudo rm -rf "/usr/local/share/gecko_driver" || true
+          sudo rm -rf "/usr/share/miniconda" || true
+          sudo rm -rf "/usr/local/share/phantomjs*" || true
+          sudo rm -rf "/usr/share/sbt" || true
+          sudo rm -rf "/usr/local/sqlpackage" || true
+          sudo rm -rf "/usr/bin/yq" || true
+          sudo rm -rf "/usr/local/share/vcpkg" || true
+          sudo rm -rf "/usr/local/bin/terraform" || true
+          sudo rm -rf "/usr/local/bin/stack" || true
+          sudo rm -rf "/usr/local/bin/aliyun" || true
+          sudo rm -rf "/usr/local/bin/pulumi" || true
+          sudo rm -rf "/usr/local/bin/pulumi-language-dotnet" || true
+          sudo rm -rf "/usr/local/bin/azcopy" || true
+          sudo rm -rf "/usr/local/aws-cli" || true
+          sudo rm -rf "/usr/local/bin/bicep" || true
+          sudo rm -rf "/usr/local/bin/rebar3" || true
+          sudo rm -rf "/usr/local/bin/phpunit" || true
+          sudo rm -rf "/usr/local/bin/packer" || true
+          sudo rm -rf "/usr/local/bin/bicep" || true
+          sudo rm -rf "/usr/local/bin/docker-compose" || true
+          sudo rm -rf "$HOME/.dotnet/tools" || true
+          sudo rm -rf "/etc/skel/.dotnet/tools" || true
+          sudo rm -rf "/usr/local/bin/minikube" || true
+          sudo rm -rf "/usr/local/bin/kustomize" || true
+          sudo rm -rf "/usr/local/bin/kubectl" || true
+          sudo rm -rf "/usr/local/bin/kind" || true
+          sudo rm -rf "/usr/local/bin/helm"
+          sudo docker image prune --all --force
+          sudo npm uninstall bazel
+          rustup self uninstall -y
+          sudo apt purge ansible aria2 azure-cli cabal* clang* \
+            dotnet-sdk* ghc* google-chrome-stable kubectl mysql* \
+            node* npm* php* powershell rpm ruby* subversion yarn \
+            firefox mono-complete nuget apache2 moby-engine moby-cli \
+            moby-buildx moby-compose microsoft-edge-stable mongodb* \
+            nginx postgresql* libpq-dev r-base sphinxsearch swig \
+            tcl temurin-* skopeo imagemagick-* mssql-tools* unixodbc-dev \
+            ubuntu-advantage-tools docker-* fonts-* llvm-* javascript-common \
+            openjdk-11-jre-headless linux-cloud-tools* linux-azure-6.2-* \
+            hicolor-icon-theme gcc-9 gcc-10 gcc-11 gcc-12 cloud-initramfs* \
+            x11-* bind9-* cloud-* gir1.2-* golang-github-* libjs-* libllvm* \
+            nano podman buildah skopeo \
+            -yq > /dev/null 2>&1 || true
+          sudo apt-get autoremove -y > /dev/null 2>&1 || true
+          sudo apt-get autoclean -y > /dev/null 2>&1 || true
+          df -h
+      - name: setup lxd
+        run: ./test/setup_lxd.sh
+      - uses: actions/cache/restore@v4
+        id: cache-restore
+        with:
+         key: lxc-image-${{ github.sha }}
+         path: /tmp/test-image.tar.zst
+         fail-on-cache-miss: true
+      - name: load lxc image
+        run: sudo lxc image import /tmp/test-image.tar.zst --alias test-export
+      - name: launch lxc container
+        run: ./test/launch_test_lxc.sh test-export
+      - name: run benchmark (all)
+        run: sudo lxc exec test -- sudo --login --user ubuntu /bin/bash -c "sleep 3 && /home/ubuntu/bypass4netns/benchmark/run_bench.sh"
