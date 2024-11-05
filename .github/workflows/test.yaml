@@ -6,6 +6,7 @@ on:
       - master
       - main
       - release/**
+      - dev
   pull_request: null
   workflow_dispatch:
 
