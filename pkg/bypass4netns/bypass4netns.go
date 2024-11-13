@@ -354,7 +354,7 @@ func (h *notifHandler) getFdInProcess(pid, targetFd int) (int, error) {
 }
 
 // getSocketArgs retrieves socket(2) arguemnts from fd.
-// return values are (sock_domain, sock_type, sock_protocol, error)
+// return values are (sock_domain, sock_type, sock_protocol including flags(e.g. O_NONBLOCK), error)
 func getSocketArgs(sockfd int) (int, int, int, error) {
 	logrus.Debugf("got sockfd=%v", sockfd)
 	sock_domain, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_DOMAIN)
@@ -370,6 +370,22 @@ func getSocketArgs(sockfd int) (int, int, int, error) {
 	sock_protocol, err := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("getsockopt(SO_PROTOCOL) failed: %s", err)
+	}
+
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(sockfd), syscall.F_GETFD, 0)
+	if errno != 0 {
+		return 0, 0, 0, fmt.Errorf("failed to get fcntl F_GETFD: %d", errno)
+	}
+	if flags&syscall.O_CLOEXEC != 0 {
+		sock_type |= syscall.SOCK_CLOEXEC
+	}
+
+	flags, _, errno = syscall.Syscall(syscall.SYS_FCNTL, uintptr(sockfd), syscall.F_GETFL, 0)
+	if errno != 0 {
+		return 0, 0, 0, fmt.Errorf("failed to get fcntl F_GETFD: %d", errno)
+	}
+	if flags&syscall.O_NONBLOCK != 0 {
+		sock_type |= syscall.SOCK_NONBLOCK
 	}
 
 	return sock_domain, sock_type, sock_protocol, nil
@@ -421,7 +437,7 @@ func (h *notifHandler) registerSocket(pid int, sockfd int, syscallName string) (
 			// non IP sockets are not handled.
 			sock.state = NotBypassable
 			logger.Debugf("socket domain=0x%x", sockDomain)
-		} else if sockType != syscall.SOCK_STREAM {
+		} else if sockType&syscall.SOCK_STREAM == 0 {
 			// only accepting TCP socket
 			sock.state = NotBypassable
 			logger.Debugf("socket type=0x%x", sockType)

@@ -250,11 +250,12 @@ func (ss *socketStatus) handleSysConnect(handler *notifHandler, ctx *context) {
 	}
 
 	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfdOnHost),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
+		id:    ctx.req.ID,
+		flags: SeccompAddFdFlagSetFd,
+		srcfd: uint32(sockfdOnHost),
+		newfd: uint32(ctx.req.Data.Args[0]),
+		// SOCK_CLOEXEC must be configured in this flag.
+		newfdFlags: uint32(ss.sockType & syscall.SOCK_CLOEXEC),
 	}
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
@@ -376,11 +377,12 @@ func (ss *socketStatus) handleSysBind(pid int, handler *notifHandler, ctx *conte
 	}
 
 	addfd := seccompNotifAddFd{
-		id:         ctx.req.ID,
-		flags:      SeccompAddFdFlagSetFd,
-		srcfd:      uint32(sockfdOnHost),
-		newfd:      uint32(ctx.req.Data.Args[0]),
-		newfdFlags: 0,
+		id:    ctx.req.ID,
+		flags: SeccompAddFdFlagSetFd,
+		srcfd: uint32(sockfdOnHost),
+		newfd: uint32(ctx.req.Data.Args[0]),
+		// SOCK_CLOEXEC must be configured in this flag.
+		newfdFlags: uint32(ss.sockType & syscall.SOCK_CLOEXEC),
 	}
 
 	err = addfd.ioctlNotifAddFd(ctx.notifFd)
