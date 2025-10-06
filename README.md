@@ -100,3 +100,7 @@ of `struct sockaddr *` pointers.
   bypass4netns: Accelerating TCP/IP Communications in Rootless Containers.
   [arXiv:2402.00365 [cs.NI]](https://arxiv.org/abs/2402.00365), February 2024.
     - [Paper](https://arxiv.org/pdf/2402.00365.pdf)
+- [Naoki Matsumoto](https://github.com/naoki9911) and [Akihiro Suda](https://github.com/AkihiroSuda).
+  bypass4netns: Accelerating TCP/IP Communications in Rootless Containers.
+  Presented in [_the 19th Asian Internet Engineering Conference (AINTEC)_](https://interlab.ait.ac.th/aintec2024), Sydney, Australia, Auguest 2024.
+    - [Paper](https://dl.acm.org/doi/pdf/10.1145/3674213.3674221) ([Best Paper Award](https://interlab.ait.ac.th/aintec2024/post-conference))
