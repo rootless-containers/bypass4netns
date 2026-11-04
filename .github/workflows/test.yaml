@@ -132,10 +132,10 @@ jobs:
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-direct.log /tmp/benchmark-results/.
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-wo-b4ns-host.log /tmp/benchmark-results/.
           sudo lxc file pull test/home/ubuntu/bypass4netns/benchmark/${{ matrix.script }}-w-b4ns.log /tmp/benchmark-results/.
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: steps.get_plot.conclusion == 'success'
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ strategy.job-index }}
           path: /tmp/benchmark-results
 
 
@@ -168,9 +168,9 @@ jobs:
           cp benchmark/${{ matrix.script }}-multinode-rootful.log /tmp/benchmark-results/.
           cp benchmark/${{ matrix.script }}-multinode-wo-b4ns.log /tmp/benchmark-results/.
           cp benchmark/${{ matrix.script }}-multinode-w-b4ns.log /tmp/benchmark-results/.
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results
+          name: benchmark-results-multi-${{ strategy.job-index }}
           path: /tmp/benchmark-results
   
   plot:
@@ -181,9 +181,10 @@ jobs:
       - uses: actions/checkout@v4.2.2
       - run: sudo apt update && sudo apt install python3 python3-pip
       - run: pip3 install matplotlib numpy
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
-          name: benchmark-results
+          pattern: benchmark-results-*
+          merge-multiple: true
           path: ./
       - run: mkdir /tmp/benchmark-plots
       - run: python3 benchmark/redis/redis_plot.py redis-rootful-direct.log redis-rootful-host.log redis-wo-b4ns-direct.log redis-wo-b4ns-host.log redis-w-b4ns.log /tmp/benchmark-plots/redis.png
@@ -202,7 +203,7 @@ jobs:
       - run: python3 benchmark/etcd/etcd_plot.py etcd-multinode-rootful.log etcd-multinode-wo-b4ns.log etcd-multinode-w-b4ns.log /tmp/benchmark-plots/etcd-multinode.png
       - run: python3 benchmark/mysql/mysql_plot.py mysql-rootful-direct.log mysql-rootful-host.log mysql-wo-b4ns-direct.log mysql-wo-b4ns-host.log mysql-w-b4ns.log /tmp/benchmark-plots/mysql.png
       - run: python3 benchmark/mysql/mysql_plot.py mysql-multinode-rootful.log mysql-multinode-wo-b4ns.log mysql-multinode-w-b4ns.log /tmp/benchmark-plots/mysql-multinode.png
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: benchmark-plots
           path: /tmp/benchmark-plots
